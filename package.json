@@ -21,6 +21,7 @@
     "firebase:migrate": "pnpm --filter @siga/api firebase:migrate",
     "firebase:seed:dry": "pnpm --filter @siga/api firebase:seed:dry",
     "firebase:seed": "pnpm --filter @siga/api firebase:seed",
+    "firebase:validate": "pnpm --filter @siga/api firebase:validate",
     "firebase:deploy:rules": "pnpm --filter @siga/api firebase:deploy:rules"
   },
   "devDependencies": {

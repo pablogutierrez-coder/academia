@@ -1,12 +1,15 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, Injectable, Post, Req, UseGuards } from "@nestjs/common";
-import { IsDateString, IsNotEmpty, IsString, IsUUID } from "class-validator";
+import { BadRequestException, Body, ConflictException, Controller, Get, Injectable, Param, Post, Put, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { Type } from "class-transformer";
+import { IsArray, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
 import type { Prisma } from "@prisma/client";
 import { AuthGuard, Permisos, PermissionsGuard } from "./auth";
 import { FirebaseService } from "./firebase.service";
 import { getDataProvider } from "./data-provider";
 import { PrismaService } from "./prisma.service";
 
-type RequestUser={user:{sub:string;organizacionId:string;permisos:string[]}};
+type RequestUser={user:{sub:string;organizacionId:string;permisos:string[];perfil?:string}};
+type UploadedResource={originalname:string;mimetype:string;buffer:Buffer};
 class ProgramaDto { @IsString() @IsNotEmpty() codigo!:string; @IsString() @IsNotEmpty() nombre!:string; }
 class ClaseDto {
   @IsUUID() grupoId!:string;
@@ -16,6 +19,34 @@ class ClaseDto {
   @IsString() titulo!:string;
   @IsDateString() inicio!:string;
   @IsDateString() fin!:string;
+}
+class LearningElementDto {
+  @IsString() @IsNotEmpty() id!:string;
+  @IsIn(["PASO","EVALUACION","FORO"]) tipo!:"PASO"|"EVALUACION"|"FORO";
+  @IsString() @IsNotEmpty() titulo!:string;
+  @IsString() descripcion!:string;
+  @IsString() contenidoTipo!:string;
+  @IsString() contenido!:string;
+  @IsOptional() @IsString() nombreArchivo?:string;
+  @IsOptional() @IsString() storagePath?:string;
+  @IsOptional() @IsString() tipoMime?:string;
+  @IsOptional() @IsInt() @Min(0) tamanoBytes?:number;
+  @IsInt() @Min(0) tiempo!:number;
+  @IsString() requisito!:string;
+  @IsString() estado!:string;
+}
+class LearningModuleDto {
+  @IsString() @IsNotEmpty() id!:string;
+  @IsString() @IsNotEmpty() titulo!:string;
+  @IsString() descripcion!:string;
+  @IsString() estado!:string;
+  @IsArray() @ValidateNested({each:true}) @Type(()=>LearningElementDto) elementos!:LearningElementDto[];
+}
+class LearningPathDto {
+  @IsString() @IsNotEmpty() titulo!:string;
+  @IsString() descripcion!:string;
+  @IsString() estado!:string;
+  @IsArray() @ValidateNested({each:true}) @Type(()=>LearningModuleDto) modulos!:LearningModuleDto[];
 }
 
 @Injectable()
@@ -100,6 +131,34 @@ export class AcademicoController {
     if(getDataProvider()==="mock") return Array.from({length:20},(_,i)=>({id:String(i+1),nombres:`Estudiante ${i+1}`,apellidos:"Ficticio",estado:"ACTIVO"}));
     if(getDataProvider()==="firebase") return this.firebase.listStudents(req.user.organizacionId);
     return this.db.estudiante.findMany({where:{organizacionId:req.user.organizacionId,deletedAt:null},take:100});
+  }
+
+  @Get("courses")
+  courses(@Req() req:RequestUser){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La persistencia LMS requiere DATA_PROVIDER=firebase");
+    return this.firebase.listCourses(req.user.organizacionId,req.user.sub,req.user.perfil);
+  }
+
+  @Get("courses/:courseId/learning-path")
+  learningPath(@Req() req:RequestUser,@Param("courseId") courseId:string){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La persistencia LMS requiere DATA_PROVIDER=firebase");
+    return this.firebase.getLearningPath(req.user.organizacionId,req.user.sub,req.user.perfil,courseId);
+  }
+
+  @Put("courses/:courseId/learning-path")
+  @Permisos("lms.gestionar")
+  saveLearningPath(@Req() req:RequestUser,@Param("courseId") courseId:string,@Body() dto:LearningPathDto){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La persistencia LMS requiere DATA_PROVIDER=firebase");
+    return this.firebase.saveLearningPath(req.user.organizacionId,req.user.sub,req.user.perfil,courseId,dto);
+  }
+
+  @Post("courses/:courseId/resources")
+  @Permisos("lms.gestionar")
+  @UseInterceptors(FileInterceptor("file",{limits:{fileSize:40*1024*1024}}))
+  uploadResource(@Req() req:RequestUser,@Param("courseId") courseId:string,@UploadedFile() file?:UploadedResource){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La persistencia LMS requiere DATA_PROVIDER=firebase");
+    if(!file) throw new BadRequestException("Selecciona un archivo válido");
+    return this.firebase.uploadCourseResource(req.user.organizacionId,req.user.sub,req.user.perfil,courseId,file);
   }
 
   @Post("clases")

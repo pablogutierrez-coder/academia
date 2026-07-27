@@ -1,6 +1,7 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { applicationDefault, cert, getApp, getApps, initializeApp, type App, type ServiceAccount } from "firebase-admin/app";
 import { FieldValue, getFirestore, type DocumentData, type Firestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { getDataProvider } from "./data-provider";
 
 type ProgramInput = { codigo: string; nombre: string };
@@ -20,6 +21,34 @@ type BulkStudent = {
   nombre: string;
   dni: string;
   cursoId: string;
+};
+export type LearningElementInput = {
+  id: string;
+  tipo: "PASO" | "EVALUACION" | "FORO";
+  titulo: string;
+  descripcion: string;
+  contenidoTipo: string;
+  contenido: string;
+  nombreArchivo?: string;
+  storagePath?: string;
+  tipoMime?: string;
+  tamanoBytes?: number;
+  tiempo: number;
+  requisito: string;
+  estado: string;
+};
+export type LearningModuleInput = {
+  id: string;
+  titulo: string;
+  descripcion: string;
+  estado: string;
+  elementos: LearningElementInput[];
+};
+export type LearningPathInput = {
+  titulo: string;
+  descripcion: string;
+  estado: string;
+  modulos: LearningModuleInput[];
 };
 export type FirebaseUser = {
   id: string;
@@ -89,7 +118,11 @@ export class FirebaseService {
     const emulator = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
     this.app = getApps().length
       ? getApp()
-      : initializeApp(emulator ? { projectId } : { projectId, credential: firebaseCredential() });
+      : initializeApp(emulator ? { projectId } : {
+          projectId,
+          credential: firebaseCredential(),
+          ...(process.env.FIREBASE_STORAGE_BUCKET ? { storageBucket: process.env.FIREBASE_STORAGE_BUCKET } : {}),
+        });
     this.store = getFirestore(this.app);
     this.store.settings({ ignoreUndefinedProperties: true });
     return this.store;
@@ -158,6 +191,211 @@ export class FirebaseService {
   async listStudents(orgId: string) {
     const result = await this.organization(orgId).collection("students").where("deletedAt", "==", null).limit(100).get();
     return result.docs.map(normalizeSnapshot);
+  }
+
+  private async accessibleCourseIds(orgId: string, userId: string, profile?: string) {
+    const org = this.organization(orgId);
+    if (profile === "Administrador" || profile === "Gestión al estudiante") return null;
+    if (profile === "Docente") {
+      const groups = await org.collection("groups").where("docenteId", "==", userId).get();
+      return new Set(groups.docs.map((document) => String(document.data().cursoId)).filter(Boolean));
+    }
+    if (profile === "Estudiante") {
+      const enrollments = await org.collection("enrollments").where("estudianteId", "==", userId).get();
+      return new Set(enrollments.docs.filter((document) => document.data().estado !== "INACTIVO").map((document) => String(document.data().cursoId)).filter(Boolean));
+    }
+    return new Set<string>();
+  }
+
+  async listCourses(orgId: string, userId: string, profile?: string) {
+    const [courses, allowed] = await Promise.all([
+      this.organization(orgId).collection("courses").get(),
+      this.accessibleCourseIds(orgId, userId, profile),
+    ]);
+    return courses.docs
+      .filter((document) => document.data().deletedAt == null && (allowed === null || allowed.has(document.id)))
+      .map((document) => {
+        const data = document.data();
+        return {
+          id: document.id,
+          codigo: String(data.codigo ?? document.id),
+          nombre: String(data.nombre ?? document.id),
+          estado: String(data.estado ?? "BORRADOR"),
+          modalidad: String(data.modalidad ?? ""),
+          progreso: Number(data.progreso ?? 0),
+        };
+      })
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  }
+
+  private async assertCourseAccess(orgId: string, userId: string, profile: string | undefined, courseId: string, write = false) {
+    const course = await this.organization(orgId).collection("courses").doc(courseId).get();
+    if (!course.exists || course.data()?.deletedAt != null) throw new NotFoundException("Curso no encontrado");
+    if (profile === "Administrador" || profile === "Gestión al estudiante") {
+      if (write && profile === "Gestión al estudiante") throw new ForbiddenException("El perfil de gestión puede consultar la ruta, pero no editar el contenido LMS");
+      return course;
+    }
+    const allowed = await this.accessibleCourseIds(orgId, userId, profile);
+    if (!allowed?.has(courseId)) throw new ForbiddenException("El curso no está asignado al usuario");
+    if (write && profile !== "Docente") throw new ForbiddenException("Solo el docente asignado o un administrador puede editar la ruta");
+    return course;
+  }
+
+  async getLearningPath(orgId: string, userId: string, profile: string | undefined, courseId: string) {
+    const course = await this.assertCourseAccess(orgId, userId, profile, courseId);
+    const routeReference = this.organization(orgId).collection("learningPaths").doc(courseId);
+    const [route, moduleSnapshot] = await Promise.all([routeReference.get(), routeReference.collection("modules").get()]);
+    const modules = await Promise.all(moduleSnapshot.docs.map(async (moduleDocument) => {
+      const [elementSnapshot, evaluationSnapshot] = await Promise.all([
+        moduleDocument.ref.collection("elements").get(),
+        moduleDocument.ref.collection("evaluations").get(),
+      ]);
+      const elements = elementSnapshot.docs.map((document) => {
+        const data = document.data();
+        return {
+          id: document.id,
+          tipo: String(data.tipo ?? "PASO"),
+          titulo: String(data.titulo ?? ""),
+          descripcion: String(data.descripcion ?? ""),
+          contenidoTipo: String(data.contenidoTipo ?? "Texto").toLowerCase().replace(/^\p{L}/u, (letter) => letter.toUpperCase()),
+          contenido: String(data.contenido ?? ""),
+          nombreArchivo: String(data.nombreArchivo ?? ""),
+          tiempo: Number(data.tiempo ?? data.tiempoMinutos ?? 0),
+          requisito: String(data.requisito ?? "Libre"),
+          estado: String(data.estado ?? "Borrador").toLowerCase().replace(/^\p{L}/u, (letter) => letter.toUpperCase()),
+          orden: Number(data.orden ?? 0),
+        };
+      });
+      const elementIds = new Set(elementSnapshot.docs.map((document) => document.id));
+      const evaluations = evaluationSnapshot.docs.filter((document) => !elementIds.has(document.id)).map((document) => {
+        const data = document.data();
+        return {
+          id: document.id,
+          tipo: "EVALUACION",
+          titulo: String(data.titulo ?? ""),
+          descripcion: String(data.instrucciones ?? ""),
+          contenidoTipo: "Cuestionario",
+          contenido: String(data.instrucciones ?? ""),
+          nombreArchivo: "",
+          tiempo: Number(data.tiempoLimiteMinutos ?? 0),
+          requisito: String(data.requisito ?? "Completar módulo"),
+          estado: String(data.estado ?? "Borrador").toLowerCase().replace(/^\p{L}/u, (letter) => letter.toUpperCase()),
+          orden: Number(data.orden ?? 999),
+        };
+      });
+      const data = moduleDocument.data();
+      return {
+        id: moduleDocument.id,
+        titulo: String(data.titulo ?? ""),
+        descripcion: String(data.descripcion ?? ""),
+        estado: String(data.estado ?? "Borrador").toLowerCase().replace(/^\p{L}/u, (letter) => letter.toUpperCase()),
+        orden: Number(data.orden ?? 0),
+        elementos: [...elements, ...evaluations].sort((a, b) => a.orden - b.orden).map(({ orden: _order, ...element }) => element),
+      };
+    }));
+    const routeData = route.data() ?? {};
+    const courseData = course.data() ?? {};
+    return {
+      cursoId: courseId,
+      titulo: String(routeData.titulo ?? courseData.nombre ?? courseId),
+      descripcion: String(routeData.descripcion ?? "Ruta de aprendizaje del curso."),
+      estado: String(routeData.estado ?? "BORRADOR"),
+      version: Number(routeData.version ?? 0),
+      modulos: modules.sort((a, b) => a.orden - b.orden).map(({ orden: _order, ...module }) => module),
+    };
+  }
+
+  async saveLearningPath(orgId: string, userId: string, profile: string | undefined, courseId: string, input: LearningPathInput) {
+    await this.assertCourseAccess(orgId, userId, profile, courseId, true);
+    const org = this.organization(orgId);
+    const routeReference = org.collection("learningPaths").doc(courseId);
+    const [currentRoute, existingModules] = await Promise.all([routeReference.get(), routeReference.collection("modules").get()]);
+    const batch = this.db().batch();
+    for (const moduleDocument of existingModules.docs) {
+      const elements = await moduleDocument.ref.collection("elements").get();
+      elements.docs.forEach((document) => batch.delete(document.ref));
+      batch.delete(moduleDocument.ref);
+    }
+    const version = Number(currentRoute.data()?.version ?? 0) + 1;
+    batch.set(routeReference, {
+      cursoId: courseId,
+      titulo: input.titulo,
+      descripcion: input.descripcion,
+      estado: input.estado,
+      version,
+      updatedBy: userId,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    input.modulos.forEach((module, moduleIndex) => {
+      const moduleReference = routeReference.collection("modules").doc(module.id);
+      batch.set(moduleReference, {
+        titulo: module.titulo,
+        descripcion: module.descripcion,
+        estado: module.estado,
+        orden: moduleIndex + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      module.elementos.forEach((element, elementIndex) => {
+        batch.set(moduleReference.collection("elements").doc(element.id), {
+          ...element,
+          orden: elementIndex + 1,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
+    });
+    const auditReference = org.collection("audit").doc();
+    batch.create(auditReference, {
+      usuarioId: userId,
+      accion: "ACTUALIZAR",
+      entidad: "RutaAprendizaje",
+      entidadId: courseId,
+      modulo: "lms",
+      correlacion: crypto.randomUUID(),
+      nuevo: { version, modulos: input.modulos.length },
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    return this.getLearningPath(orgId, userId, profile, courseId);
+  }
+
+  async uploadCourseResource(orgId: string, userId: string, profile: string | undefined, courseId: string, file: { originalname: string; mimetype: string; buffer: Buffer }) {
+    await this.assertCourseAccess(orgId, userId, profile, courseId, true);
+    if (!process.env.FIREBASE_STORAGE_BUCKET) throw new BadRequestException("Falta FIREBASE_STORAGE_BUCKET en la API. Habilita Firebase Storage y configura el nombre del bucket.");
+    const safeName = file.originalname.normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/[^a-zA-Z0-9._-]/g, "-");
+    const objectName = `organizations/${orgId}/courses/${courseId}/resources/${crypto.randomUUID()}-${safeName}`;
+    const bucket = getStorage(this.app ?? getApp()).bucket(process.env.FIREBASE_STORAGE_BUCKET);
+    const object = bucket.file(objectName);
+    const token = crypto.randomUUID();
+    await object.save(file.buffer, {
+      resumable: false,
+      contentType: file.mimetype,
+      metadata: {
+        cacheControl: "private,max-age=3600",
+        metadata: { firebaseStorageDownloadTokens: token, uploadedBy: userId, courseId },
+      },
+    });
+    const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectName)}?alt=media&token=${token}`;
+    const resourceReference = this.organization(orgId).collection("courseResources").doc();
+    await resourceReference.set({
+      cursoId: courseId,
+      nombreArchivo: file.originalname,
+      tipoMime: file.mimetype,
+      tamanoBytes: file.buffer.length,
+      storagePath: objectName,
+      url,
+      estado: "ACTIVO",
+      uploadedBy: userId,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return {
+      id: resourceReference.id,
+      url,
+      nombreArchivo: file.originalname,
+      tipoMime: file.mimetype,
+      tamanoBytes: file.buffer.length,
+      storagePath: objectName,
+    };
   }
 
   async findUser(login: string): Promise<FirebaseUser | null> {

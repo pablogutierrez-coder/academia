@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { api } from "../lib/api";
 
 type Perfil = "ADMINISTRADOR" | "DOCENTE" | "ESTUDIANTE" | "GESTION_ESTUDIANTE";
 type Opcion = { label: string; href: string };
@@ -147,6 +148,7 @@ export function SaasShell({
   const [temaAyuda, setTemaAyuda] = useState("Navegación y módulos");
   const [perfilActivo, setPerfilActivo] = useState<Perfil>(perfil);
   const [modulosActivos, setModulosActivos] = useState<string[]>([]);
+  const [persistencia, setPersistencia] = useState<"verificando"|"firebase"|"desconectada">("verificando");
   const areaActivaId = resolverArea(pathname);
   const areasVisibles = areas.filter((area) => area.perfiles.includes(perfilActivo) && (modulosActivos.length===0 || modulosActivos.includes(area.label)));
   const areaActiva = areasVisibles.find((area) => area.id === areaActivaId) ?? areasVisibles[0]!;
@@ -170,6 +172,14 @@ export function SaasShell({
     const profileMap:Record<string,Perfil>={"Administrador":"ADMINISTRADOR","Docente":"DOCENTE","Estudiante":"ESTUDIANTE","Gestión al estudiante":"GESTION_ESTUDIANTE"};
     if(storedProfile&&profileMap[storedProfile])setPerfilActivo(profileMap[storedProfile]);
     try{setModulosActivos(JSON.parse(localStorage.getItem("siga_modulos")??"[]") as string[]);}catch{setModulosActivos([]);}
+  },[]);
+
+  useEffect(() => {
+    let active=true;
+    api<{database?:string;provider?:string}>("/health")
+      .then((health)=>{if(active)setPersistencia(health.database==="firestore"||health.provider==="firebase"?"firebase":"desconectada");})
+      .catch(()=>{if(active)setPersistencia("desconectada");});
+    return()=>{active=false;};
   },[]);
 
   useEffect(() => {
@@ -256,7 +266,7 @@ export function SaasShell({
         </nav>
         <div className="context-footer">
           <span className="environment-dot" />
-          <div><strong>Entorno de demostración</strong><small>Datos no persistentes</small></div>
+          <div><strong>{persistencia==="firebase"?"Firebase conectado":persistencia==="verificando"?"Verificando conexión":"Conexión pendiente"}</strong><small>{persistencia==="firebase"?"Datos sincronizados":"Revisa el servicio de datos"}</small></div>
           <Link className="logout-link" href="/login">Salir</Link>
         </div>
       </aside>

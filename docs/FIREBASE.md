@@ -26,10 +26,13 @@ DEMO_MODE=false
 DATA_PROVIDER=firebase
 FIREBASE_PROJECT_ID=mi-proyecto-firebase
 FIREBASE_DEFAULT_ORGANIZATION_ID=uuid-real-de-la-organizacion
+FIREBASE_STORAGE_BUCKET=mi-proyecto-firebase.firebasestorage.app
 GOOGLE_APPLICATION_CREDENTIALS=C:\ruta\segura\cuenta-servicio.json
 ```
 
 `JWT_SECRET` debe seguir siendo un secreto independiente y robusto.
+El bucket se obtiene en Firebase Console → Storage. Es necesario para archivos
+PDF, PPT/PPTX, videos y otros recursos de la ruta de aprendizaje.
 
 ## 3. Desarrollo seguro con el emulador
 
@@ -67,7 +70,13 @@ Para crear o actualizar la estructura base de SIGA:
 
 ```bash
 pnpm firebase:seed
+pnpm firebase:validate
 ```
+
+`firebase:validate` inspecciona el proyecto configurado y comprueba colecciones,
+documentos de referencia, relaciones y campos obligatorios sin modificar datos.
+Los archivos del LMS se guardan en Storage y su metadata se registra en
+`organizations/{organizationId}/courseResources`.
 
 La inicialización incluye organización, seguridad, usuarios, programas, cursos,
 grupos, matrículas, clases, asistencias, rutas LMS, evaluaciones, notas,

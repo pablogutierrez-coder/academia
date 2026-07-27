@@ -14,6 +14,7 @@
     "firebase:migrate": "node scripts/migrate-prisma-to-firestore.mjs --execute",
     "firebase:seed:dry": "node scripts/seed-firestore.mjs",
     "firebase:seed": "node scripts/seed-firestore.mjs --execute",
+    "firebase:validate": "node scripts/validate-firestore.mjs",
     "firebase:deploy:rules": "node scripts/deploy-firestore-rules.mjs"
   },
   "dependencies": {

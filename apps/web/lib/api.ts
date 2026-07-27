@@ -5,7 +5,12 @@ export async function api<T>(path:string,init?:RequestInit):Promise<T>{
   const isFormData=typeof FormData!=="undefined"&&init?.body instanceof FormData;
   const headers=new Headers(init?.headers);
   if(!isFormData&&!headers.has("Content-Type"))headers.set("Content-Type","application/json");
-  const response=await fetch(`${API}${normalizedPath}`,{...init,credentials:"include",headers});
+  const response=await fetch(`${API}${normalizedPath}`,{
+    ...init,
+    credentials:"include",
+    headers,
+    cache:init?.cache??"no-store",
+  });
   if(!response.ok){const body=await response.json().catch(()=>({message:"Error de comunicación"})) as {message?:string};throw new Error(body.message ?? "No fue posible completar la operación");}
   return response.json() as Promise<T>;
 }

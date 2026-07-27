@@ -6,7 +6,7 @@ import { api } from "../../lib/api";
 export default function Login(){
   const router=useRouter();const[error,setError]=useState("");const[loading,setLoading]=useState(false);
   async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();setLoading(true);setError("");const data=new FormData(e.currentTarget);
-    try{await api("/auth/login",{method:"POST",body:JSON.stringify({usuario:data.get("usuario"),password:data.get("password")})});router.push("/dashboard");}
+    try{const result=await api<{usuario?:{perfil?:string;modulos?:string[]};requiereCambioPassword?:boolean}>("/auth/login",{method:"POST",body:JSON.stringify({usuario:data.get("usuario"),password:data.get("password")})});if(result.usuario){localStorage.setItem("siga_perfil",result.usuario.perfil??"Administrador");localStorage.setItem("siga_modulos",JSON.stringify(result.usuario.modulos??[]));}router.push(result.requiereCambioPassword?"/cambiar-contrasena":"/dashboard");}
     catch(err){setError(err instanceof Error?err.message:"No fue posible iniciar sesión");}finally{setLoading(false);}
   }
   return <main className="login">

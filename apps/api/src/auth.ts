@@ -1,7 +1,7 @@
-import { Body, CanActivate, Controller, ExecutionContext, ForbiddenException, Injectable, Post, Res, SetMetadata, UnauthorizedException } from "@nestjs/common";
+import { Body, CanActivate, Controller, ExecutionContext, ForbiddenException, Get, Injectable, Post, Req, Res, SetMetadata, UnauthorizedException, UseGuards } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Type } from "class-transformer";
-import { IsArray, IsEmail, IsString, MinLength, ValidateNested } from "class-validator";
+import { IsArray, IsEmail, IsIn, IsOptional, IsString, Matches, MinLength, ValidateNested } from "class-validator";
 import argon2 from "argon2";
 import type { Response } from "express";
 import { FirebaseService } from "./firebase.service";
@@ -27,6 +27,35 @@ class BulkStudentsDto {
   @ValidateNested({ each: true })
   @Type(() => BulkStudentItemDto)
   students!: BulkStudentItemDto[];
+}
+
+const modulesByProfile: Record<string, string[]> = {
+  Docente: ["Docente"],
+  Estudiante: ["Estudiante"],
+  "Gestión al estudiante": ["Gestión al estudiante"],
+  Administrador: ["Docente", "Estudiante", "Gestión al estudiante", "Administrador"],
+};
+
+const permissionsByProfile: Record<string, string[]> = {
+  Docente: ["cursos.leer", "asistencia.registrar", "notas.gestionar", "lms.gestionar", "reportes.leer"],
+  Estudiante: ["cursos.leer", "asistencia.propia", "notas.propias", "solicitudes.crear", "certificados.leer"],
+  "Gestión al estudiante": ["programas.leer", "programas.gestionar", "grupos.gestionar", "estudiantes.gestionar", "clases.programar", "reportes.leer", "encuestas.gestionar", "tickets.gestionar"],
+  Administrador: ["usuarios.gestionar", "roles.gestionar", "programas.leer", "programas.gestionar", "grupos.gestionar", "docentes.gestionar", "estudiantes.gestionar", "clases.programar", "clases.aprobar", "auditoria.leer", "reportes.leer", "cursos.leer", "asistencia.registrar", "asistencia.propia", "notas.gestionar", "notas.propias", "lms.gestionar", "encuestas.gestionar", "tickets.gestionar", "solicitudes.crear", "certificados.leer"],
+};
+
+class CreateUserDto {
+  @IsString() @MinLength(3) nombre!: string;
+  @Matches(/^\d{8}$/,{message:"El DNI debe tener exactamente 8 dígitos"}) dni!: string;
+  @Matches(/^9\d{8}$/,{message:"El celular debe tener 9 dígitos y comenzar con 9"}) celular!: string;
+  @Matches(/^9\d{8}$/,{message:"El WhatsApp debe tener 9 dígitos y comenzar con 9"}) whatsapp!: string;
+  @IsEmail({}, {message:"Ingresa un correo válido"}) correo!: string;
+  @IsIn(["Docente","Estudiante","Gestión al estudiante","Administrador"]) perfil!: string;
+  @IsOptional() @IsArray() @IsString({each:true}) modulos?: string[];
+}
+
+class ChangePasswordDto {
+  @IsString() passwordActual!: string;
+  @IsString() @MinLength(8) nuevaPassword!: string;
 }
 
 const demoStudentUsers = new Map<string, BulkStudentItemDto>();
@@ -89,9 +118,9 @@ export class AuthController {
     if(getDataProvider()==="firebase"){
       const usuario=await this.firebase.findUser(dto.usuario);
       if(!usuario || usuario.estado!=="ACTIVO" || !(await argon2.verify(usuario.passwordHash,dto.password))) throw new UnauthorizedException("Credenciales inválidas");
-      const token=await this.jwt.signAsync({sub:usuario.id,organizacionId:usuario.organizacionId,permisos:usuario.permisos,perfil:usuario.perfil});
+      const token=await this.jwt.signAsync({sub:usuario.id,organizacionId:usuario.organizacionId,permisos:usuario.permisos,perfil:usuario.perfil,cambioPasswordRequerido:usuario.cambioPasswordRequerido});
       res.cookie("siga_session",token,sessionCookie());
-      return {usuario:{id:usuario.id,nombre:usuario.nombre,usuario:usuario.usuario,correo:usuario.correo,permisos:usuario.permisos,perfil:usuario.perfil}};
+      return {usuario:{id:usuario.id,nombre:usuario.nombre,usuario:usuario.usuario,correo:usuario.correo,permisos:usuario.permisos,perfil:usuario.perfil,modulos:usuario.modulos},requiereCambioPassword:usuario.cambioPasswordRequerido};
     }
     const usuario=await this.db.usuario.findFirst({where:{correo:dto.usuario,estado:"ACTIVO"},include:{roles:{include:{rol:{include:{permisos:{include:{permiso:true}}}}}}}});
     if(!usuario || !(await argon2.verify(usuario.passwordHash,dto.password))) throw new UnauthorizedException("Credenciales inválidas");
@@ -99,6 +128,48 @@ export class AuthController {
     const token=await this.jwt.signAsync({sub:usuario.id,organizacionId:usuario.organizacionId,permisos});
     res.cookie("siga_session",token,sessionCookie());
     return {usuario:{id:usuario.id,nombre:usuario.nombre,correo:usuario.correo,permisos}};
+  }
+
+  @Get("users")
+  @UseGuards(AuthGuard,PermissionsGuard)
+  @Permisos("usuarios.gestionar")
+  async users(@Req() req:{user:{organizacionId:string}}){
+    if(getDataProvider()!=="firebase") throw new ForbiddenException("La gestión de usuarios requiere Firebase");
+    return this.firebase.listUsers(req.user.organizacionId);
+  }
+
+  @Post("users")
+  @UseGuards(AuthGuard,PermissionsGuard)
+  @Permisos("usuarios.gestionar")
+  async createUser(@Req() req:{user:{organizacionId:string}},@Body() dto:CreateUserDto){
+    if(getDataProvider()!=="firebase") throw new ForbiddenException("La gestión de usuarios requiere Firebase");
+    const availableModules=modulesByProfile[dto.perfil] ?? [];
+    const modules=dto.perfil==="Administrador"
+      ? (dto.modulos?.filter((module)=>availableModules.includes(module)) ?? availableModules)
+      : availableModules;
+    return this.firebase.createUser(req.user.organizacionId,{
+      nombre:dto.nombre.trim(),
+      dni:dto.dni,
+      celular:dto.celular,
+      whatsapp:dto.whatsapp,
+      correo:dto.correo.trim().toLowerCase(),
+      perfil:dto.perfil,
+      modulos:modules,
+      permisos:permissionsByProfile[dto.perfil] ?? [],
+      passwordHash:await argon2.hash(dto.dni),
+    });
+  }
+
+  @Post("change-password")
+  @UseGuards(AuthGuard)
+  async changePassword(@Req() req:{user:{sub:string;organizacionId:string}},@Body() dto:ChangePasswordDto){
+    if(getDataProvider()!=="firebase") throw new ForbiddenException("El cambio de contraseña requiere Firebase");
+    const current=await this.firebase.findUserById(req.user.organizacionId,req.user.sub);
+    if(!current || !(await argon2.verify(current.passwordHash,dto.passwordActual))) throw new UnauthorizedException("La contraseña actual no es correcta");
+    if(!/^[A-Za-z0-9]{8,}$/.test(dto.nuevaPassword)) throw new ForbiddenException("La nueva contraseña debe tener al menos 8 caracteres y usar solo letras sin tilde y números");
+    if(dto.nuevaPassword===current.dni) throw new ForbiddenException("La nueva contraseña no puede ser igual al DNI");
+    await this.firebase.changePassword(req.user.organizacionId,req.user.sub,await argon2.hash(dto.nuevaPassword));
+    return {ok:true};
   }
 
   @Post("bulk-students")

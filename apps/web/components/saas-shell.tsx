@@ -145,8 +145,10 @@ export function SaasShell({
   const [notificacionesLeidas, setNotificacionesLeidas] = useState<number[]>([]);
   const [ayudaAbierta, setAyudaAbierta] = useState(false);
   const [temaAyuda, setTemaAyuda] = useState("Navegación y módulos");
+  const [perfilActivo, setPerfilActivo] = useState<Perfil>(perfil);
+  const [modulosActivos, setModulosActivos] = useState<string[]>([]);
   const areaActivaId = resolverArea(pathname);
-  const areasVisibles = areas.filter((area) => area.perfiles.includes(perfil));
+  const areasVisibles = areas.filter((area) => area.perfiles.includes(perfilActivo) && (modulosActivos.length===0 || modulosActivos.includes(area.label)));
   const areaActiva = areasVisibles.find((area) => area.id === areaActivaId) ?? areasVisibles[0]!;
   const opcionActiva = areaActiva.opciones.find((opcion) => opcion.href === pathname);
   const fecha = new Intl.DateTimeFormat("es-PE", {
@@ -162,6 +164,13 @@ export function SaasShell({
     ? destinosBusqueda.filter((destino) => `${destino.label} ${destino.area} ${destino.description}`.toLocaleLowerCase("es").includes(consulta.trim().toLocaleLowerCase("es")))
     : destinosBusqueda.slice(0, 8);
   const pendientes = notificacionesIniciales.filter((item) => !notificacionesLeidas.includes(item.id)).length;
+
+  useEffect(() => {
+    const storedProfile=localStorage.getItem("siga_perfil");
+    const profileMap:Record<string,Perfil>={"Administrador":"ADMINISTRADOR","Docente":"DOCENTE","Estudiante":"ESTUDIANTE","Gestión al estudiante":"GESTION_ESTUDIANTE"};
+    if(storedProfile&&profileMap[storedProfile])setPerfilActivo(profileMap[storedProfile]);
+    try{setModulosActivos(JSON.parse(localStorage.getItem("siga_modulos")??"[]") as string[]);}catch{setModulosActivos([]);}
+  },[]);
 
   useEffect(() => {
     setBusquedaAbierta(false);

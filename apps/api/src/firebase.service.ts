@@ -31,6 +31,23 @@ export type FirebaseUser = {
   estado: string;
   permisos: string[];
   perfil?: string;
+  dni?: string;
+  celular?: string;
+  whatsapp?: string;
+  modulos?: string[];
+  cambioPasswordRequerido?: boolean;
+};
+
+export type CreateFirebaseUser = {
+  nombre: string;
+  dni: string;
+  celular: string;
+  whatsapp: string;
+  correo: string;
+  perfil: string;
+  permisos: string[];
+  modulos: string[];
+  passwordHash: string;
 };
 
 const activeClassStates = new Set(["BORRADOR", "PENDIENTE_APROBACION", "PROGRAMADA", "CONFIRMADA", "EN_EJECUCION", "EJECUTADA"]);
@@ -163,10 +180,135 @@ export class FirebaseService {
           estado: String(data.estado ?? "ACTIVO"),
           permisos: Array.isArray(data.permisos) ? data.permisos.map(String) : [],
           ...(data.perfil ? { perfil: String(data.perfil) } : {}),
+          ...(data.dni ? { dni: String(data.dni) } : {}),
+          ...(data.celular ? { celular: String(data.celular) } : {}),
+          ...(data.whatsapp ? { whatsapp: String(data.whatsapp) } : {}),
+          ...(Array.isArray(data.modulos) ? { modulos: data.modulos.map(String) } : {}),
+          cambioPasswordRequerido: Boolean(data.cambioPasswordRequerido),
         };
       }
     }
     return null;
+  }
+
+  async findUserById(orgId: string, userId: string): Promise<FirebaseUser | null> {
+    const document = await this.organization(orgId).collection("users").doc(userId).get();
+    if (!document.exists) return null;
+    const data = document.data()!;
+    return {
+      id: document.id,
+      organizacionId: orgId,
+      nombre: String(data.nombre),
+      usuario: String(data.usuario),
+      correo: String(data.correo),
+      passwordHash: String(data.passwordHash),
+      estado: String(data.estado ?? "ACTIVO"),
+      permisos: Array.isArray(data.permisos) ? data.permisos.map(String) : [],
+      ...(data.perfil ? { perfil: String(data.perfil) } : {}),
+      ...(data.dni ? { dni: String(data.dni) } : {}),
+      cambioPasswordRequerido: Boolean(data.cambioPasswordRequerido),
+    };
+  }
+
+  async listUsers(orgId: string) {
+    const result = await this.organization(orgId).collection("users").where("deletedAt", "==", null).get();
+    return result.docs.map((document) => {
+      const data = document.data();
+      return {
+        id: document.id,
+        nombre: String(data.nombre),
+        dni: String(data.dni ?? ""),
+        celular: String(data.celular ?? ""),
+        whatsapp: String(data.whatsapp ?? ""),
+        correo: String(data.correo),
+        usuario: String(data.usuario),
+        perfil: String(data.perfil ?? ""),
+        modulos: Array.isArray(data.modulos) ? data.modulos.map(String) : [],
+        estado: String(data.estado ?? "ACTIVO"),
+        cambioPasswordRequerido: Boolean(data.cambioPasswordRequerido),
+      };
+    }).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  }
+
+  async createUser(orgId: string, input: CreateFirebaseUser) {
+    const org = this.organization(orgId);
+    const users = org.collection("users");
+    const normalizedEmail = input.correo.trim().toLowerCase();
+    const [emailMatch, dniMatch] = await Promise.all([
+      users.where("correoNormalizado", "==", normalizedEmail).limit(1).get(),
+      users.where("dni", "==", input.dni).limit(1).get(),
+    ]);
+    if (!emailMatch.empty) throw new ConflictException("Ya existe un usuario con este correo");
+    if (!dniMatch.empty) throw new ConflictException("Ya existe un usuario con este DNI");
+
+    const parts = input.nombre.trim().split(/\s+/);
+    const firstName = parts[0] ?? "usuario";
+    const firstLastName = parts.length > 1 ? parts[parts.length - 1]! : input.dni;
+    const baseUsername = `${firstName}.${firstLastName}`
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .replace(/[^a-zA-Z0-9.]/g, "")
+      .toLowerCase();
+    let username = baseUsername;
+    let suffix = 1;
+    while (!(await users.where("usuarioNormalizado", "==", username).limit(1).get()).empty) {
+      suffix += 1;
+      username = `${baseUsername}${suffix}`;
+    }
+
+    const reference = users.doc();
+    const now = FieldValue.serverTimestamp();
+    const data = {
+      ...input,
+      usuario: username,
+      usuarioNormalizado: username,
+      correo: normalizedEmail,
+      correoNormalizado: normalizedEmail,
+      organizacionId: orgId,
+      estado: "ACTIVO",
+      cambioPasswordRequerido: true,
+      intentosFallidos: 0,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    };
+    const batch = this.db().batch();
+    batch.create(reference, data);
+    if (input.perfil === "Docente") {
+      batch.set(org.collection("teachers").doc(reference.id), {
+        nombre: input.nombre,
+        documento: input.dni,
+        telefono: input.celular,
+        whatsapp: input.whatsapp,
+        correo: normalizedEmail,
+        estado: "ACTIVO",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    if (input.perfil === "Estudiante") {
+      batch.set(org.collection("students").doc(input.dni), {
+        nombres: firstName,
+        apellidos: parts.slice(1).join(" "),
+        documento: input.dni,
+        telefono: input.celular,
+        whatsapp: input.whatsapp,
+        correo: normalizedEmail,
+        estado: "ACTIVO",
+        deletedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    }
+    await batch.commit();
+    return { id: reference.id, nombre: input.nombre, dni: input.dni, celular: input.celular, whatsapp: input.whatsapp, correo: normalizedEmail, usuario: username, perfil: input.perfil, modulos: input.modulos, estado: "ACTIVO", cambioPasswordRequerido: true };
+  }
+
+  async changePassword(orgId: string, userId: string, passwordHash: string) {
+    const reference = this.organization(orgId).collection("users").doc(userId);
+    const current = await reference.get();
+    if (!current.exists) throw new Error("Usuario no encontrado");
+    await reference.update({ passwordHash, cambioPasswordRequerido: false, updatedAt: FieldValue.serverTimestamp() });
   }
 
   async createClass(orgId: string, actorId: string, input: ClassInput) {
@@ -216,7 +358,7 @@ export class FirebaseService {
         const exists = await studentRef.get();
         const [firstName = student.nombre, ...lastNames] = student.nombre.trim().split(/\s+/);
         batch.set(studentRef, { documento: student.dni, nombres: firstName, apellidos: lastNames.join(" "), correo: student.correo, estado: "ACTIVO", deletedAt: null, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-        batch.set(userRef, { nombre: student.nombre, usuario: student.usuario, usuarioNormalizado: student.usuario.toLowerCase(), correo: student.correo, correoNormalizado: student.correo.toLowerCase(), passwordHash: await hashPassword(student.password), estado: "ACTIVO", perfil: "ESTUDIANTE", permisos: ["cursos.leer", "asistencia.propia", "notas.propias", "solicitudes.crear", "certificados.leer"], updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        batch.set(userRef, { nombre: student.nombre, dni: student.dni, usuario: student.usuario, usuarioNormalizado: student.usuario.toLowerCase(), correo: student.correo, correoNormalizado: student.correo.toLowerCase(), passwordHash: await hashPassword(student.password), estado: "ACTIVO", perfil: "Estudiante", modulos: ["Estudiante"], permisos: ["cursos.leer", "asistencia.propia", "notas.propias", "solicitudes.crear", "certificados.leer"], cambioPasswordRequerido: true, deletedAt: null, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
         batch.set(enrollmentRef, { estudianteId: studentId, cursoId: student.cursoId, estado: "ACTIVO", fechaIngreso: FieldValue.serverTimestamp() }, { merge: true });
         (exists.exists ? updated : created).push(student.correo);
       }

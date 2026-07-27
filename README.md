@@ -49,6 +49,12 @@ pnpm firebase:migrate:dry
 pnpm firebase:migrate
 ```
 
+### Railway
+
+El repositorio incluye contenedores independientes y configuración como código
+para desplegar la API y el frontend como dos servicios. Sigue la guía
+[`docs/RAILWAY.md`](docs/RAILWAY.md) antes de configurar variables y dominios.
+
 ## Validación
 
 ```bash

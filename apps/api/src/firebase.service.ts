@@ -1,5 +1,5 @@
 import { ConflictException, Injectable } from "@nestjs/common";
-import { applicationDefault, getApp, getApps, initializeApp, type App } from "firebase-admin/app";
+import { applicationDefault, cert, getApp, getApps, initializeApp, type App, type ServiceAccount } from "firebase-admin/app";
 import { FieldValue, getFirestore, type DocumentData, type Firestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { getDataProvider } from "./data-provider";
 
@@ -39,6 +39,21 @@ function normalizeSnapshot(snapshot: QueryDocumentSnapshot<DocumentData>): Docum
   return { id: snapshot.id, ...snapshot.data() };
 }
 
+function firebaseCredential() {
+  const encoded = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON ??
+    (encoded ? Buffer.from(encoded, "base64").toString("utf8") : undefined);
+  if (!raw) return applicationDefault();
+
+  try {
+    return cert(JSON.parse(raw) as ServiceAccount);
+  } catch {
+    throw new Error(
+      "FIREBASE_SERVICE_ACCOUNT_JSON o FIREBASE_SERVICE_ACCOUNT_BASE64 no contiene una credencial válida",
+    );
+  }
+}
+
 @Injectable()
 export class FirebaseService {
   private app?: App;
@@ -57,7 +72,7 @@ export class FirebaseService {
     const emulator = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
     this.app = getApps().length
       ? getApp()
-      : initializeApp(emulator ? { projectId } : { projectId, credential: applicationDefault() });
+      : initializeApp(emulator ? { projectId } : { projectId, credential: firebaseCredential() });
     this.store = getFirestore(this.app);
     this.store.settings({ ignoreUndefinedProperties: true });
     return this.store;

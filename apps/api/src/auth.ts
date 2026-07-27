@@ -31,6 +31,17 @@ class BulkStudentsDto {
 
 const demoStudentUsers = new Map<string, BulkStudentItemDto>();
 
+function sessionCookie() {
+  const crossSite = process.env.COOKIE_SAME_SITE === "none";
+  return {
+    httpOnly: true,
+    sameSite: crossSite ? "none" as const : "lax" as const,
+    secure: crossSite || process.env.NODE_ENV === "production",
+    maxAge: 900000,
+    path: "/",
+  };
+}
+
 export const Permisos = (...permisos:string[]) => SetMetadata("permisos",permisos);
 
 @Injectable()
@@ -65,28 +76,28 @@ export class AuthController {
       if(dto.usuario==="admin@elite.test" && dto.password==="SigaElite.Dev.2026!"){
         const permisos=["usuarios.gestionar","roles.gestionar","programas.leer","programas.gestionar","grupos.gestionar","docentes.gestionar","estudiantes.gestionar","clases.programar","clases.aprobar","auditoria.leer","reportes.leer"];
         const token=await this.jwt.signAsync({sub:"00000000-0000-4000-8000-000000000001",organizacionId:"00000000-0000-4000-8000-000000000001",permisos});
-        res.cookie("siga_session",token,{httpOnly:true,sameSite:"lax",secure:false,maxAge:900000,path:"/"});
+        res.cookie("siga_session",token,sessionCookie());
         return {usuario:{id:"00000000-0000-4000-8000-000000000001",nombre:"Administración SIGA",usuario:dto.usuario,correo:"admin@elite.test",permisos},modo:"demostracion"};
       }
       const demoStudent=demoStudentUsers.get(dto.usuario.toLowerCase());
       if(!demoStudent || demoStudent.password!==dto.password) throw new UnauthorizedException("Credenciales inválidas");
       const permisos=["cursos.leer","asistencia.propia","notas.propias","solicitudes.crear","certificados.leer"];
       const token=await this.jwt.signAsync({sub:`demo-${demoStudent.dni}`,organizacionId:"00000000-0000-4000-8000-000000000001",permisos,perfil:"Estudiante"});
-      res.cookie("siga_session",token,{httpOnly:true,sameSite:"lax",secure:false,maxAge:900000,path:"/"});
+      res.cookie("siga_session",token,sessionCookie());
       return {usuario:{id:`demo-${demoStudent.dni}`,nombre:demoStudent.nombre,usuario:demoStudent.usuario,correo:demoStudent.correo,permisos,perfil:"Estudiante"},modo:"demostracion"};
     }
     if(getDataProvider()==="firebase"){
       const usuario=await this.firebase.findUser(dto.usuario);
       if(!usuario || usuario.estado!=="ACTIVO" || !(await argon2.verify(usuario.passwordHash,dto.password))) throw new UnauthorizedException("Credenciales inválidas");
       const token=await this.jwt.signAsync({sub:usuario.id,organizacionId:usuario.organizacionId,permisos:usuario.permisos,perfil:usuario.perfil});
-      res.cookie("siga_session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:900000,path:"/"});
+      res.cookie("siga_session",token,sessionCookie());
       return {usuario:{id:usuario.id,nombre:usuario.nombre,usuario:usuario.usuario,correo:usuario.correo,permisos:usuario.permisos,perfil:usuario.perfil}};
     }
     const usuario=await this.db.usuario.findFirst({where:{correo:dto.usuario,estado:"ACTIVO"},include:{roles:{include:{rol:{include:{permisos:{include:{permiso:true}}}}}}}});
     if(!usuario || !(await argon2.verify(usuario.passwordHash,dto.password))) throw new UnauthorizedException("Credenciales inválidas");
     const permisos=[...new Set(usuario.roles.flatMap((r:{rol:{permisos:Array<{permiso:{codigo:string}}>}})=>r.rol.permisos.map((p:{permiso:{codigo:string}})=>p.permiso.codigo)))];
     const token=await this.jwt.signAsync({sub:usuario.id,organizacionId:usuario.organizacionId,permisos});
-    res.cookie("siga_session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:900000,path:"/"});
+    res.cookie("siga_session",token,sessionCookie());
     return {usuario:{id:usuario.id,nombre:usuario.nombre,correo:usuario.correo,permisos}};
   }
 

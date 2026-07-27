@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nest start --watch",
     "build": "nest build",
+    "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test",
     "test": "node --test test/*.spec.mjs",

@@ -5,10 +5,10 @@ import { useParams } from "next/navigation";
 import { Filter, MoreHorizontal, Search, SlidersHorizontal } from "lucide-react";
 import { SaasShell } from "../../components/saas-shell";
 import { CourseDetail, CourseManagement } from "../../components/course-management";
-import { AdminUsers, LmsBuilder, TeacherAssessments, TeacherAttendance } from "../../components/module-functions";
+import { AdminUsers, LmsBuilder, StudentLearningPath as FirebaseStudentLearningPath, TeacherAssessments, TeacherAttendance } from "../../components/module-functions";
 import { ModuleDashboard } from "../../components/module-dashboard";
 import { TeacherAgenda } from "../../components/teacher-agenda";
-import { StudentAttendance, StudentCalendar, StudentCertificates, StudentGrades, StudentLearningPath, StudentRequests } from "../../components/student-functions";
+import { StudentAttendance, StudentCalendar, StudentCertificates, StudentGrades, StudentRequests } from "../../components/student-functions";
 import { AcademicCatalogManagement } from "../../components/academic-catalogs";
 import { AbsenceCRM } from "../../components/absence-crm";
 import { AttendanceControl, RetentionResults } from "../../components/attendance-retention";
@@ -110,7 +110,7 @@ export default function ModuloPage() {
       : clave === "docente-materiales" ? <LmsBuilder />
       : clave === "docente-evaluaciones" ? <TeacherAssessments />
       : clave === "docente-agenda" ? <TeacherAgenda />
-      : clave === "mis-cursos" ? <StudentLearningPath />
+      : clave === "mis-cursos" ? <FirebaseStudentLearningPath />
       : clave === "mi-calendario" ? <StudentCalendar />
       : clave === "mi-asistencia" ? <StudentAttendance />
       : clave === "mis-notas" ? <StudentGrades />

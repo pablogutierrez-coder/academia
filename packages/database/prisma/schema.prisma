@@ -1,0 +1,224 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EstadoGeneral {
+  ACTIVO
+  INACTIVO
+  ARCHIVADO
+}
+enum EstadoClase {
+  BORRADOR
+  PENDIENTE_APROBACION
+  PROGRAMADA
+  CONFIRMADA
+  EN_EJECUCION
+  EJECUTADA
+  REPROGRAMADA
+  CANCELADA
+  OBSERVADA
+}
+
+model Organizacion {
+  id String @id @default(uuid()) @db.Uuid
+  nombre String
+  codigo String @unique
+  usuarios Usuario[]
+  programas Programa[]
+  grupos Grupo[]
+  docentes Docente[]
+  estudiantes Estudiante[]
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  @@map("organizaciones")
+}
+
+model Usuario {
+  id String @id @default(uuid()) @db.Uuid
+  organizacionId String @map("organizacion_id") @db.Uuid
+  organizacion Organizacion @relation(fields: [organizacionId], references: [id])
+  nombre String
+  correo String
+  passwordHash String @map("password_hash")
+  estado EstadoGeneral @default(ACTIVO)
+  ultimoAcceso DateTime? @map("ultimo_acceso") @db.Timestamptz
+  intentosFallidos Int @default(0) @map("intentos_fallidos")
+  roles UsuarioRol[]
+  auditorias Auditoria[]
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+  version Int @default(1)
+  @@unique([organizacionId, correo])
+  @@index([correo])
+  @@map("usuarios")
+}
+
+model Rol {
+  id String @id @default(uuid()) @db.Uuid
+  nombre String @unique
+  usuarios UsuarioRol[]
+  permisos RolPermiso[]
+  @@map("roles")
+}
+model Permiso {
+  id String @id @default(uuid()) @db.Uuid
+  codigo String @unique
+  descripcion String
+  roles RolPermiso[]
+  @@map("permisos")
+}
+model UsuarioRol {
+  usuarioId String @map("usuario_id") @db.Uuid
+  rolId String @map("rol_id") @db.Uuid
+  usuario Usuario @relation(fields:[usuarioId], references:[id], onDelete:Cascade)
+  rol Rol @relation(fields:[rolId], references:[id], onDelete:Cascade)
+  @@id([usuarioId, rolId])
+  @@map("usuarios_roles")
+}
+model RolPermiso {
+  rolId String @map("rol_id") @db.Uuid
+  permisoId String @map("permiso_id") @db.Uuid
+  rol Rol @relation(fields:[rolId], references:[id], onDelete:Cascade)
+  permiso Permiso @relation(fields:[permisoId], references:[id], onDelete:Cascade)
+  @@id([rolId, permisoId])
+  @@map("roles_permisos")
+}
+
+model Programa {
+  id String @id @default(uuid()) @db.Uuid
+  organizacionId String @map("organizacion_id") @db.Uuid
+  organizacion Organizacion @relation(fields:[organizacionId], references:[id])
+  codigo String
+  nombre String
+  descripcion String?
+  estado EstadoGeneral @default(ACTIVO)
+  grupos Grupo[]
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+  version Int @default(1)
+  @@unique([organizacionId, codigo])
+  @@index([organizacionId, estado])
+  @@map("programas")
+}
+
+model Grupo {
+  id String @id @default(uuid()) @db.Uuid
+  organizacionId String @map("organizacion_id") @db.Uuid
+  organizacion Organizacion @relation(fields:[organizacionId], references:[id])
+  programaId String @map("programa_id") @db.Uuid
+  programa Programa @relation(fields:[programaId], references:[id])
+  codigo String
+  fechaInicio DateTime @map("fecha_inicio") @db.Date
+  fechaFin DateTime @map("fecha_fin") @db.Date
+  capacidad Int
+  estado EstadoGeneral @default(ACTIVO)
+  estudiantes EstudianteGrupo[]
+  clases Clase[]
+  @@unique([organizacionId, codigo])
+  @@index([programaId, estado])
+  @@map("grupos")
+}
+
+model Docente {
+  id String @id @default(uuid()) @db.Uuid
+  organizacionId String @map("organizacion_id") @db.Uuid
+  organizacion Organizacion @relation(fields:[organizacionId], references:[id])
+  documento String
+  nombres String
+  apellidos String
+  correo String
+  horasMaximasSemana Int @default(20) @map("horas_maximas_semana")
+  estado EstadoGeneral @default(ACTIVO)
+  clases Clase[]
+  @@unique([organizacionId, documento])
+  @@unique([organizacionId, correo])
+  @@map("docentes")
+}
+
+model Estudiante {
+  id String @id @default(uuid()) @db.Uuid
+  organizacionId String @map("organizacion_id") @db.Uuid
+  organizacion Organizacion @relation(fields:[organizacionId], references:[id])
+  documento String
+  nombres String
+  apellidos String
+  correo String
+  telefono String?
+  estado EstadoGeneral @default(ACTIVO)
+  grupos EstudianteGrupo[]
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+  @@unique([organizacionId, documento])
+  @@unique([organizacionId, correo])
+  @@map("estudiantes")
+}
+
+model EstudianteGrupo {
+  estudianteId String @map("estudiante_id") @db.Uuid
+  grupoId String @map("grupo_id") @db.Uuid
+  estudiante Estudiante @relation(fields:[estudianteId], references:[id])
+  grupo Grupo @relation(fields:[grupoId], references:[id])
+  fechaIngreso DateTime @default(now()) @map("fecha_ingreso") @db.Timestamptz
+  @@id([estudianteId, grupoId])
+  @@map("estudiantes_grupos")
+}
+
+model Clase {
+  id String @id @default(uuid()) @db.Uuid
+  grupoId String @map("grupo_id") @db.Uuid
+  grupo Grupo @relation(fields:[grupoId], references:[id])
+  docenteId String @map("docente_id") @db.Uuid
+  docente Docente @relation(fields:[docenteId], references:[id])
+  moduloCodigo String @map("modulo_codigo")
+  temaCodigo String @map("tema_codigo")
+  titulo String
+  inicio DateTime @db.Timestamptz
+  fin DateTime @db.Timestamptz
+  estado EstadoClase @default(BORRADOR)
+  tipoRepeticion String? @map("tipo_repeticion")
+  justificacion String?
+  historial HistorialClase[]
+  @@index([docenteId, inicio, fin])
+  @@index([grupoId, inicio, fin])
+  @@index([grupoId, moduloCodigo, temaCodigo])
+  @@map("clases")
+}
+
+model HistorialClase {
+  id String @id @default(uuid()) @db.Uuid
+  claseId String @map("clase_id") @db.Uuid
+  clase Clase @relation(fields:[claseId], references:[id])
+  accion String
+  motivo String?
+  anterior Json?
+  nuevo Json
+  actorId String @map("actor_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  @@index([claseId, createdAt])
+  @@map("historial_clases")
+}
+
+model Auditoria {
+  id String @id @default(uuid()) @db.Uuid
+  usuarioId String? @map("usuario_id") @db.Uuid
+  usuario Usuario? @relation(fields:[usuarioId], references:[id])
+  accion String
+  entidad String
+  entidadId String @map("entidad_id")
+  anterior Json?
+  nuevo Json?
+  motivo String?
+  modulo String
+  ip String?
+  correlacion String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  @@index([entidad, entidadId])
+  @@index([createdAt])
+  @@map("auditoria")
+}

@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // La aplicación accede a Firestore únicamente desde Firebase Admin en la API.
+    // El acceso directo desde clientes web o móviles permanece bloqueado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@siga/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "nest build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "test": "node --test test/*.spec.mjs",
+    "firebase:migrate:dry": "node scripts/migrate-prisma-to-firestore.mjs",
+    "firebase:migrate": "node scripts/migrate-prisma-to-firestore.mjs --execute",
+    "firebase:seed:dry": "node scripts/seed-firestore.mjs",
+    "firebase:seed": "node scripts/seed-firestore.mjs --execute",
+    "firebase:deploy:rules": "node scripts/deploy-firestore-rules.mjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.1.6",
+    "@nestjs/core": "11.1.6",
+    "@nestjs/jwt": "11.0.0",
+    "@nestjs/platform-express": "11.1.6",
+    "@nestjs/swagger": "11.2.0",
+    "@prisma/client": "6.13.0",
+    "argon2": "0.44.0",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.14.2",
+    "cookie-parser": "1.4.7",
+    "dotenv": "17.4.2",
+    "firebase-admin": "14.2.0",
+    "helmet": "8.1.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "11.0.10",
+    "@nestjs/testing": "11.1.6",
+    "@types/cookie-parser": "1.4.9",
+    "@types/express": "5.0.3",
+    "@types/jest": "30.0.0",
+    "@types/node": "24.1.0",
+    "jest": "30.0.5",
+    "ts-jest": "29.4.1",
+    "typescript": "5.9.2"
+  }
+}

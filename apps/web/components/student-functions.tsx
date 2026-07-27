@@ -12,13 +12,13 @@ import {
   Download,
   FileText,
   MapPin,
-  MessageSquareText,
   Plus,
   Send,
   Video,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { ForumExperience } from "./module-functions";
 
 const courses = ["Analítica de datos aplicada", "Estrategias de marketing digital"] as const;
 type Course = typeof courses[number];
@@ -50,7 +50,7 @@ export function StudentLearningPath() {
       <section className="student-learning-page panel">
         <div className="learning-hero"><div><span>CURSO ACTIVO · {selectedCourse.id}</span><h2>{selectedCourse.title}</h2><p>{selectedCourse.description}</p></div><div className="learning-progress-ring"><strong>{active + 1}/{learningItems.length}</strong><span>contenidos</span></div></div>
         <div className="learning-experience"><aside><h3>Contenido del curso</h3>{["Módulo 1 · Fundamentos", "Módulo 2 · Aplicación"].map((module) => <div className="learning-module-list" key={module}><strong>{module}</strong>{learningItems.map((entry, index) => entry.module === module && <button className={index === active ? "is-active" : ""} onClick={() => setActive(index)} key={entry.title}><span>{index + 1}</span><div><b>{entry.title}</b><small>{entry.type} · {entry.time} min</small></div></button>)}</div>)}</aside>
-          <div className="learning-main"><span className="learning-current-module">{item.module}</span><h2>{item.title}</h2><p className="learning-description">{item.description}</p><article className="learning-content"><span className="learning-content-type">{item.type} · {item.time} min</span>{item.type === "Foro" ? <div className="forum-preview"><MessageSquareText size={30}/><h3>Participa en el foro</h3><p>{item.content}</p><textarea aria-label="Respuesta del estudiante" placeholder="Escribe tu aporte…"/><button onClick={() => setMessage("Tu participación fue registrada.")}>Publicar respuesta</button></div> : item.type === "Evaluación" ? <div className="assessment-preview"><FileText size={30}/><h3>Evaluación disponible</h3><p>{item.content}</p><button onClick={() => setMessage("Evaluación preparada para iniciar en modo demostración.")}>Comenzar evaluación</button></div> : <div className="video-placeholder"><BookOpen size={32}/><strong>{item.type === "Video" ? "Recurso audiovisual" : "Contenido interactivo"}</strong><span>{item.content}</span><button onClick={() => setMessage("Contenido abierto en modo demostración.")}>Abrir contenido</button></div>}</article><footer className="learning-navigation"><button disabled={active === 0} onClick={() => setActive((value) => value - 1)}><ChevronLeft size={17}/>Anterior</button><span>{active + 1} de {learningItems.length}</span><button disabled={active === learningItems.length - 1} onClick={() => setActive((value) => value + 1)}>Siguiente<ChevronRight size={17}/></button></footer></div>
+          <div className="learning-main"><span className="learning-current-module">{item.module}</span><h2>{item.title}</h2><p className="learning-description">{item.description}</p><article className={`learning-content${item.type === "Foro" ? " learning-content-foro" : ""}`}><span className="learning-content-type">{item.type} · {item.time} min</span>{item.type === "Foro" ? <ForumExperience contenido={item.content} onPublish={() => setMessage("Tu participación fue registrada.")}/> : item.type === "Evaluación" ? <div className="assessment-preview"><FileText size={30}/><h3>Evaluación disponible</h3><p>{item.content}</p><button onClick={() => setMessage("Evaluación preparada para iniciar en modo demostración.")}>Comenzar evaluación</button></div> : <div className="video-placeholder"><BookOpen size={32}/><strong>{item.type === "Video" ? "Recurso audiovisual" : "Contenido interactivo"}</strong><span>{item.content}</span><button onClick={() => setMessage("Contenido abierto en modo demostración.")}>Abrir contenido</button></div>}</article><footer className="learning-navigation"><button disabled={active === 0} onClick={() => setActive((value) => value - 1)}><ChevronLeft size={17}/>Anterior</button><span>{active + 1} de {learningItems.length}</span><button disabled={active === learningItems.length - 1} onClick={() => setActive((value) => value + 1)}>Siguiente<ChevronRight size={17}/></button></footer></div>
         </div>
       </section>
     </>}

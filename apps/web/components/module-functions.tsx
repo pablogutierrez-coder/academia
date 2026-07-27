@@ -168,7 +168,7 @@ function ResourceViewer({elemento}:{elemento:ElementoLms}){
   return <div className="text-content-preview">{contenido}</div>;
 }
 
-function ForumExperience({contenido,modoVistaPrevia=false,onPublish}:{contenido:string;modoVistaPrevia?:boolean;onPublish:()=>void}){
+export function ForumExperience({contenido,modoVistaPrevia=false,onPublish}:{contenido:string;modoVistaPrevia?:boolean;onPublish:()=>void}){
   const[respuesta,setRespuesta]=useState("");
   const minimo=40;
   const limite=1200;

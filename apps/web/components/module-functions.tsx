@@ -8,15 +8,21 @@ import {
   ChevronRight,
   CheckCircle2,
   ClipboardCheck,
+  Download,
+  ExternalLink,
+  FileText,
   FileQuestion,
   FolderOpen,
   Eye,
   MessageSquareText,
   Pencil,
+  PlayCircle,
   Plus,
+  Presentation,
   Search,
   ShieldCheck,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -45,7 +51,7 @@ export function TeacherAttendance() {
   </>;
 }
 
-type ElementoLms={id:string;tipo:"PASO"|"EVALUACION"|"FORO";titulo:string;descripcion:string;contenidoTipo:string;contenido:string;tiempo:number;requisito:string;estado:string};
+type ElementoLms={id:string;tipo:"PASO"|"EVALUACION"|"FORO";titulo:string;descripcion:string;contenidoTipo:string;contenido:string;nombreArchivo?:string;tiempo:number;requisito:string;estado:string};
 type ModuloLms={id:string;titulo:string;descripcion:string;estado:string;elementos:ElementoLms[]};
 const modulosIniciales:ModuloLms[]=[
   {id:"mod-1",titulo:"Módulo 1 · Fundamentos",descripcion:"Conceptos esenciales y contexto del curso.",estado:"Publicado",elementos:[
@@ -62,6 +68,136 @@ const modulosIniciales:ModuloLms[]=[
 ];
 const iconoElemento={PASO:BookOpen,EVALUACION:FileQuestion,FORO:MessageSquareText};
 
+function normalizarTipo(tipo:string,contenido:string,nombreArchivo?:string){
+  const valor=tipo.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const referencia=(nombreArchivo||contenido).split("?")[0]?.toLowerCase()??"";
+  if(valor==="archivo"){
+    if(referencia.endsWith(".pdf"))return"pdf";
+    if(referencia.endsWith(".ppt")||referencia.endsWith(".pptx"))return"presentacion";
+    if(/\.(mp4|webm|ogg|mov)$/.test(referencia))return"video";
+  }
+  return valor;
+}
+
+function urlSegura(valor:string){
+  const limpio=valor.trim().replaceAll("&amp;","&");
+  if(limpio.startsWith("data:")||limpio.startsWith("blob:"))return limpio;
+  try{
+    const url=new URL(limpio);
+    return ["http:","https:"].includes(url.protocol)?url.toString():"";
+  }catch{return"";}
+}
+
+function extraerFuenteHtml(html:string){
+  const coincidencia=html.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+  return coincidencia?.[1]?urlSegura(coincidencia[1]):"";
+}
+
+function fuenteVideo(valor:string){
+  const segura=urlSegura(valor);
+  if(!segura)return{url:"",embed:false};
+  try{
+    const url=new URL(segura);
+    if(url.hostname.includes("youtube.com")){
+      const id=url.searchParams.get("v");
+      return{id:id??"",url:id?`https://www.youtube-nocookie.com/embed/${id}`:"",embed:true};
+    }
+    if(url.hostname==="youtu.be"){
+      const id=url.pathname.slice(1).split("/")[0];
+      return{id,url:id?`https://www.youtube-nocookie.com/embed/${id}`:"",embed:true};
+    }
+    if(url.hostname.includes("vimeo.com")){
+      const id=url.pathname.split("/").filter(Boolean).pop();
+      return{id:id??"",url:id?`https://player.vimeo.com/video/${id}`:"",embed:true};
+    }
+  }catch{return{url:segura,embed:false};}
+  return{url:segura,embed:false};
+}
+
+function ResourceEmpty({tipo}:{tipo:string}){
+  return <div className="resource-empty"><FileText size={34}/><strong>Recurso pendiente de configurar</strong><span>Agrega el contenido o la dirección del recurso desde el editor del curso.</span><small>Tipo seleccionado: {tipo}</small></div>;
+}
+
+function ResourceViewer({elemento}:{elemento:ElementoLms}){
+  const tipo=normalizarTipo(elemento.contenidoTipo,elemento.contenido,elemento.nombreArchivo);
+  const contenido=elemento.contenido.trim();
+  if(!contenido)return <ResourceEmpty tipo={elemento.contenidoTipo}/>;
+
+  if(tipo==="html"){
+    const fuente=extraerFuenteHtml(contenido);
+    return <div className="resource-viewer resource-html">
+      <div className="resource-viewer-toolbar"><span><FileText size={16}/><strong>Contenido interactivo</strong></span>{fuente&&<a href={fuente} target="_blank" rel="noreferrer"><ExternalLink size={15}/>Abrir en otra pestaña</a>}</div>
+      {fuente
+        ? <iframe src={fuente} title={elemento.titulo} loading="lazy" allow="fullscreen; autoplay; clipboard-write" allowFullScreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"/>
+        : <iframe srcDoc={contenido} title={elemento.titulo} sandbox="allow-scripts allow-forms allow-popups allow-presentation"/>}
+    </div>;
+  }
+
+  if(tipo==="video"){
+    const video=fuenteVideo(contenido);
+    if(!video.url)return <ResourceEmpty tipo="Video"/>;
+    return <div className="resource-viewer resource-video">
+      <div className="resource-viewer-toolbar"><span><PlayCircle size={16}/><strong>Video del curso</strong></span><a href={video.url} target="_blank" rel="noreferrer"><ExternalLink size={15}/>Abrir video</a></div>
+      {video.embed
+        ? <iframe src={video.url} title={elemento.titulo} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen/>
+        : <video src={video.url} controls preload="metadata">Tu navegador no puede reproducir este video.</video>}
+    </div>;
+  }
+
+  if(tipo==="pdf"){
+    const fuente=urlSegura(contenido);
+    if(!fuente)return <ResourceEmpty tipo="PDF"/>;
+    return <div className="resource-viewer resource-document">
+      <div className="resource-viewer-toolbar"><span><FileText size={16}/><strong>{elemento.nombreArchivo||"Documento PDF"}</strong></span><span className="resource-actions"><a href={fuente} target="_blank" rel="noreferrer"><ExternalLink size={15}/>Abrir</a><a href={fuente} download={elemento.nombreArchivo}><Download size={15}/>Descargar</a></span></div>
+      <object data={`${fuente}#toolbar=1&navpanes=0`} type="application/pdf"><div className="resource-fallback"><FileText size={34}/><strong>La vista previa no está disponible en este navegador.</strong><a href={fuente} target="_blank" rel="noreferrer">Abrir documento PDF</a></div></object>
+    </div>;
+  }
+
+  if(tipo==="presentacion"){
+    const fuente=urlSegura(contenido);
+    if(!fuente)return <ResourceEmpty tipo="Presentación"/>;
+    const publicada=/^https?:/i.test(fuente);
+    const visor=publicada?`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fuente)}`:"";
+    return <div className="resource-viewer resource-presentation">
+      <div className="resource-viewer-toolbar"><span><Presentation size={16}/><strong>{elemento.nombreArchivo||"Presentación"}</strong></span><span className="resource-actions"><a href={fuente} target="_blank" rel="noreferrer"><ExternalLink size={15}/>Abrir</a><a href={fuente} download={elemento.nombreArchivo}><Download size={15}/>Descargar</a></span></div>
+      {visor?<iframe src={visor} title={elemento.titulo} allowFullScreen/>:<div className="resource-fallback"><Presentation size={38}/><strong>Presentación lista para descargar</strong><p>Para mostrar diapositivas dentro del curso, publica el archivo en una URL accesible e ingrésala en el recurso.</p><a href={fuente} download={elemento.nombreArchivo}><Download size={16}/>Descargar presentación</a></div>}
+    </div>;
+  }
+
+  if(tipo==="url"){
+    const fuente=urlSegura(contenido);
+    if(!fuente)return <ResourceEmpty tipo="Enlace"/>;
+    return <div className="resource-viewer resource-url"><div className="resource-viewer-toolbar"><span><ExternalLink size={16}/><strong>Recurso externo</strong></span><a href={fuente} target="_blank" rel="noreferrer"><ExternalLink size={15}/>Abrir en otra pestaña</a></div><iframe src={fuente} title={elemento.titulo} loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"/></div>;
+  }
+
+  if(tipo==="archivo"){
+    const fuente=urlSegura(contenido);
+    return <div className="resource-fallback"><FileText size={38}/><strong>{elemento.nombreArchivo||"Material descargable"}</strong><p>Este archivo está disponible como material complementario del curso.</p>{fuente&&<a href={fuente} download={elemento.nombreArchivo}><Download size={16}/>Descargar archivo</a>}</div>;
+  }
+
+  return <div className="text-content-preview">{contenido}</div>;
+}
+
+function ResourceContentFields({elemento,tipoInicial,esEvaluacion}:{elemento?:ElementoLms|undefined;tipoInicial:string;esEvaluacion:boolean}){
+  const[tipo,setTipo]=useState(elemento?.contenidoTipo??tipoInicial);
+  const[contenido,setContenido]=useState(elemento?.contenido??"");
+  const[nombreArchivo,setNombreArchivo]=useState(elemento?.nombreArchivo??"");
+  const tipoNormalizado=normalizarTipo(tipo,contenido,nombreArchivo);
+  const admiteArchivo=["archivo","pdf","presentacion","video"].includes(tipoNormalizado);
+  function cargarArchivo(event:React.ChangeEvent<HTMLInputElement>){
+    const archivo=event.target.files?.[0];if(!archivo)return;
+    if(archivo.size>40*1024*1024){event.target.value="";return;}
+    const lector=new FileReader();
+    lector.onload=()=>{setContenido(String(lector.result??""));setNombreArchivo(archivo.name);};
+    lector.readAsDataURL(archivo);
+  }
+  const ayuda=tipoNormalizado==="html"?"Pega HTML completo o el código iframe del recurso.":tipoNormalizado==="video"?"Pega una URL de YouTube, Vimeo o de un archivo MP4/WebM.":tipoNormalizado==="pdf"?"Pega una URL pública o selecciona un PDF.":tipoNormalizado==="presentacion"?"Pega una URL pública de PPT/PPTX para visualizarla embebida, o adjunta el archivo para descarga.":"Escribe el contenido o pega la dirección del recurso.";
+  return <><label className="form-field"><span>Tipo de contenido</span><select name="contenidoTipo" value={tipo} onChange={(event)=>{setTipo(event.target.value);setContenido("");setNombreArchivo("");}}><option>Texto</option><option>URL</option><option>HTML</option><option>Video</option><option>PDF</option><option>Presentación</option><option>Archivo</option>{esEvaluacion&&<option>Cuestionario</option>}</select></label>
+    <label className="form-field lms-resource-content"><span>{tipoNormalizado==="texto"?"Contenido":"Contenido o URL del recurso"}</span><textarea name="contenido" rows={6} value={contenido} onChange={(event)=>{setContenido(event.target.value);if(event.target.value!==contenido)setNombreArchivo("");}} placeholder={ayuda}/><small>{ayuda}</small></label>
+    {admiteArchivo&&<label className="lms-resource-upload"><Upload size={20}/><span><strong>{nombreArchivo||"Seleccionar archivo"}</strong><small>PDF, PPT, PPTX, MP4, WebM u otro material · máximo 40 MB</small></span><input type="file" accept={tipoNormalizado==="pdf"?".pdf":tipoNormalizado==="presentacion"?".ppt,.pptx":tipoNormalizado==="video"?"video/*":".pdf,.ppt,.pptx,.mp4,.webm,.doc,.docx,.xlsx,.zip"} onChange={cargarArchivo}/></label>}
+    <input type="hidden" name="nombreArchivo" value={nombreArchivo}/></>;
+}
+
 export function LmsBuilder(){
   type Editor={kind:"MODULO";moduleIndex?:number}|{kind:"ELEMENTO";moduleIndex:number;itemIndex?:number;tipo:ElementoLms["tipo"]};
   const[modulos,setModulos]=useState(modulosIniciales);const[mensaje,setMensaje]=useState("");const[editor,setEditor]=useState<Editor|null>(null);const[preview,setPreview]=useState(false);const[activePreview,setActivePreview]=useState(0);
@@ -70,7 +206,7 @@ export function LmsBuilder(){
   function moverElemento(moduleIndex:number,itemIndex:number,direccion:-1|1){setModulos((actuales)=>actuales.map((modulo,i)=>{if(i!==moduleIndex)return modulo;const destino=itemIndex+direccion;if(destino<0||destino>=modulo.elementos.length)return modulo;const elementos=[...modulo.elementos];[elementos[itemIndex],elementos[destino]]=[elementos[destino]!,elementos[itemIndex]!];return{...modulo,elementos};}));setMensaje("Orden del contenido actualizado.");}
   function eliminarElemento(moduleIndex:number,itemIndex:number){setModulos((actuales)=>actuales.map((modulo,i)=>i===moduleIndex?{...modulo,elementos:modulo.elementos.filter((_,j)=>j!==itemIndex)}:modulo));setMensaje("Contenido eliminado del módulo.");}
   function guardarModulo(event:React.FormEvent<HTMLFormElement>){event.preventDefault();if(!editor||editor.kind!=="MODULO")return;const form=new FormData(event.currentTarget);const data={titulo:String(form.get("titulo")),descripcion:String(form.get("descripcion")),estado:String(form.get("estado"))};if(editor.moduleIndex===undefined){setModulos((actuales)=>[...actuales,{id:`mod-${Date.now()}`,...data,elementos:[]}]);setMensaje("Módulo creado como borrador.");}else{setModulos((actuales)=>actuales.map((modulo,i)=>i===editor.moduleIndex?{...modulo,...data}:modulo));setMensaje("Módulo actualizado.");}setEditor(null);}
-  function guardarElemento(event:React.FormEvent<HTMLFormElement>){event.preventDefault();if(!editor||editor.kind!=="ELEMENTO")return;const form=new FormData(event.currentTarget);const elemento:ElementoLms={id:editor.itemIndex===undefined?`elm-${Date.now()}`:modulos[editor.moduleIndex]!.elementos[editor.itemIndex]!.id,tipo:editor.tipo,titulo:String(form.get("titulo")),descripcion:String(form.get("descripcion")),contenidoTipo:String(form.get("contenidoTipo")),contenido:String(form.get("contenido")),tiempo:Number(form.get("tiempo")),requisito:String(form.get("requisito")),estado:String(form.get("estado"))};setModulos((actuales)=>actuales.map((modulo,i)=>{if(i!==editor.moduleIndex)return modulo;const elementos=[...modulo.elementos];if(editor.itemIndex===undefined)elementos.push(elemento);else elementos[editor.itemIndex]=elemento;return{...modulo,elementos};}));setMensaje(`${editor.tipo==="PASO"?"Paso":editor.tipo==="EVALUACION"?"Evaluación":"Foro"} guardado correctamente.`);setEditor(null);}
+  function guardarElemento(event:React.FormEvent<HTMLFormElement>){event.preventDefault();if(!editor||editor.kind!=="ELEMENTO")return;const form=new FormData(event.currentTarget);const elemento:ElementoLms={id:editor.itemIndex===undefined?`elm-${Date.now()}`:modulos[editor.moduleIndex]!.elementos[editor.itemIndex]!.id,tipo:editor.tipo,titulo:String(form.get("titulo")),descripcion:String(form.get("descripcion")),contenidoTipo:String(form.get("contenidoTipo")),contenido:String(form.get("contenido")),nombreArchivo:String(form.get("nombreArchivo")||""),tiempo:Number(form.get("tiempo")),requisito:String(form.get("requisito")),estado:String(form.get("estado"))};setModulos((actuales)=>actuales.map((modulo,i)=>{if(i!==editor.moduleIndex)return modulo;const elementos=[...modulo.elementos];if(editor.itemIndex===undefined)elementos.push(elemento);else elementos[editor.itemIndex]=elemento;return{...modulo,elementos};}));setMensaje(`${editor.tipo==="PASO"?"Paso":editor.tipo==="EVALUACION"?"Evaluación":"Foro"} guardado correctamente.`);setEditor(null);}
   const moduloEditado=editor?.kind==="MODULO"&&editor.moduleIndex!==undefined?modulos[editor.moduleIndex]:undefined;
   const elementoEditado=editor?.kind==="ELEMENTO"&&editor.itemIndex!==undefined?modulos[editor.moduleIndex]?.elementos[editor.itemIndex]:undefined;
   const contenidosVisibles=modulos.flatMap((modulo,moduleIndex)=>modulo.elementos.filter((elemento)=>elemento.estado!=="Borrador"&&elemento.estado!=="Programado").map((elemento)=>({modulo,moduleIndex,elemento})));
@@ -81,8 +217,8 @@ export function LmsBuilder(){
     <section className="teacher-context panel lms-course-context"><label className="form-field"><span>Curso</span><select><option>Analítica de datos aplicada</option><option>Estrategias de marketing digital</option></select></label><div><small>Estructura</small><strong>{modulos.length} módulos · {modulos.reduce((total,item)=>total+item.elementos.length,0)} elementos</strong></div><div><small>Estado</small><span className="status-badge success">Publicado parcialmente</span></div></section>
     <section className="lms-modules">{modulos.map((modulo,indice)=><article className="panel lms-module" key={modulo.id}><header><span className="module-number">{indice+1}</span><div><h2>{modulo.titulo}</h2><p>{modulo.descripcion} · {modulo.estado}</p></div><div className="lms-module-actions"><button className="icon-button small" disabled={indice===0} onClick={()=>moverModulo(indice,-1)} aria-label={`Subir ${modulo.titulo}`}><ArrowUp size={15}/></button><button className="icon-button small" disabled={indice===modulos.length-1} onClick={()=>moverModulo(indice,1)} aria-label={`Bajar ${modulo.titulo}`}><ArrowDown size={15}/></button><button className="icon-button small" onClick={()=>setEditor({kind:"MODULO",moduleIndex:indice})} aria-label={`Editar ${modulo.titulo}`}><Pencil size={15}/></button><button className="icon-button small danger-outline" onClick={()=>eliminarModulo(indice)} aria-label={`Eliminar ${modulo.titulo}`}><Trash2 size={15}/></button></div></header><div className="lms-items">{modulo.elementos.map((elemento,itemIndex)=>{const Icon=iconoElemento[elemento.tipo];return <div key={elemento.id}><span className={`lms-type ${elemento.tipo.toLowerCase()}`}><Icon size={17}/></span><div><strong>{elemento.titulo}</strong><small>{elemento.tipo} · {elemento.contenidoTipo} · {elemento.tiempo} min · {elemento.estado}</small></div><div className="lms-item-actions"><button className="icon-button small" disabled={itemIndex===0} onClick={()=>moverElemento(indice,itemIndex,-1)} aria-label={`Subir ${elemento.titulo}`}><ArrowUp size={14}/></button><button className="icon-button small" disabled={itemIndex===modulo.elementos.length-1} onClick={()=>moverElemento(indice,itemIndex,1)} aria-label={`Bajar ${elemento.titulo}`}><ArrowDown size={14}/></button><button className="icon-button small" onClick={()=>setEditor({kind:"ELEMENTO",moduleIndex:indice,itemIndex,tipo:elemento.tipo})} aria-label={`Editar ${elemento.titulo}`}><Pencil size={14}/></button><button className="icon-button small danger-outline" onClick={()=>eliminarElemento(indice,itemIndex)} aria-label={`Eliminar ${elemento.titulo}`}><Trash2 size={14}/></button></div></div>})}{modulo.elementos.length===0&&<div className="lms-empty"><FolderOpen size={22}/><span>Añade el primer contenido del módulo.</span></div>}</div><footer><button onClick={()=>setEditor({kind:"ELEMENTO",moduleIndex:indice,tipo:"PASO"})}><Plus size={14}/>Paso</button><button onClick={()=>setEditor({kind:"ELEMENTO",moduleIndex:indice,tipo:"EVALUACION"})}><Plus size={14}/>Evaluación</button><button onClick={()=>setEditor({kind:"ELEMENTO",moduleIndex:indice,tipo:"FORO"})}><Plus size={14}/>Foro</button></footer></article>)}</section>
     {editor?.kind==="MODULO"&&<div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modulo-title"><header><div><span className="page-kicker">Estructura del curso</span><h2 id="modulo-title">{moduloEditado?"Editar módulo":"Agregar módulo"}</h2><p>Define el nombre, propósito y visibilidad del módulo.</p></div><button className="icon-button" onClick={()=>setEditor(null)} aria-label="Cerrar editor de módulo"><X size={18}/></button></header><form onSubmit={guardarModulo}><label className="form-field"><span>Título *</span><input name="titulo" required defaultValue={moduloEditado?.titulo}/></label><label className="form-field"><span>Descripción</span><textarea name="descripcion" rows={4} defaultValue={moduloEditado?.descripcion}/></label><label className="form-field"><span>Estado</span><select name="estado" defaultValue={moduloEditado?.estado??"Borrador"}><option>Borrador</option><option>Publicado</option><option>Programado</option></select></label><footer><button className="btn btn-secondary" type="button" onClick={()=>setEditor(null)}>Cancelar</button><button className="btn btn-primary" type="submit">Guardar módulo</button></footer></form></section></div>}
-    {editor?.kind==="ELEMENTO"&&<div className="modal-backdrop"><section className="modal lms-editor-modal" role="dialog" aria-modal="true" aria-labelledby="elemento-title"><header><div><span className="page-kicker">{editor.tipo}</span><h2 id="elemento-title">{elementoEditado?"Editar":"Agregar"} {editor.tipo==="PASO"?"paso":editor.tipo==="EVALUACION"?"evaluación":"foro"}</h2><p>Configura el contenido, requisito de avance y estado de publicación.</p></div><button className="icon-button" onClick={()=>setEditor(null)} aria-label="Cerrar editor de contenido"><X size={18}/></button></header><form onSubmit={guardarElemento}><div className="form-row lms-title-row"><label className="form-field"><span>Título *</span><input name="titulo" required defaultValue={elementoEditado?.titulo}/></label><label className="form-field"><span>Tipo de contenido</span><select name="contenidoTipo" defaultValue={elementoEditado?.contenidoTipo??(editor.tipo==="EVALUACION"?"Cuestionario":"Texto")}><option>Texto</option><option>URL</option><option>HTML</option><option>Archivo</option><option>Video</option>{editor.tipo==="EVALUACION"&&<option>Cuestionario</option>}</select></label></div><label className="form-field"><span>Descripción</span><textarea name="descripcion" rows={3} defaultValue={elementoEditado?.descripcion}/></label><label className="form-field"><span>Contenido</span><textarea name="contenido" rows={6} placeholder="Escribe el contenido, instrucciones o enlace del recurso..." defaultValue={elementoEditado?.contenido}/></label><div className="form-row lms-config-row"><label className="form-field"><span>Tiempo (min)</span><input name="tiempo" type="number" min="0" defaultValue={elementoEditado?.tiempo??0}/></label><label className="form-field"><span>Requisito</span><select name="requisito" defaultValue={elementoEditado?.requisito??"Libre"}><option>Libre</option><option>Completar paso anterior</option><option>Completar módulo anterior</option><option>Completar módulo</option></select></label><label className="form-field"><span>Estado</span><select name="estado" defaultValue={elementoEditado?.estado??"Borrador"}><option>Borrador</option><option>Publicado</option><option>Programado</option><option>Abierto</option></select></label></div><footer><button className="btn btn-secondary" type="button" onClick={()=>setEditor(null)}>Cancelar</button><button className="btn btn-primary" type="submit">Guardar {editor.tipo==="PASO"?"paso":editor.tipo==="EVALUACION"?"evaluación":"foro"}</button></footer></form></section></div>}
-    {preview&&<div className="learning-preview-backdrop"><section className="learning-preview" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header className="learning-preview-top"><strong>Vista del estudiante</strong><button onClick={()=>setPreview(false)} aria-label="Cerrar vista del estudiante"><X size={21}/></button></header><div className="learning-hero"><div><span>RUTA DE APRENDIZAJE</span><h2 id="preview-title">Analítica de datos aplicada</h2><p>Aprende a transformar información en decisiones mediante una experiencia práctica y progresiva.</p></div><div className="learning-progress-ring"><strong>{Math.min(activePreview+1,contenidosVisibles.length)}/{contenidosVisibles.length}</strong><span>contenidos</span></div></div><div className="learning-experience"><aside><h3>Contenido del curso</h3>{modulos.map((modulo,moduleIndex)=>{const visibles=contenidosVisibles.filter((item)=>item.moduleIndex===moduleIndex);if(visibles.length===0)return null;return <div className="learning-module-list" key={modulo.id}><strong>{modulo.titulo}</strong>{visibles.map((item)=>{const globalIndex=contenidosVisibles.indexOf(item);return <button className={globalIndex===activePreview?"is-active":""} onClick={()=>setActivePreview(globalIndex)} key={item.elemento.id}><span>{globalIndex+1}</span><div><b>{item.elemento.titulo}</b><small>{item.elemento.contenidoTipo} · {item.elemento.tiempo} min</small></div></button>})}</div>})}</aside><div className="learning-main">{contenidoActivo?<><span className="learning-current-module">{contenidoActivo.modulo.titulo}</span><h2>{contenidoActivo.elemento.titulo}</h2><p className="learning-description">{contenidoActivo.elemento.descripcion}</p><article className={`learning-content learning-content-${contenidoActivo.elemento.tipo.toLowerCase()}`}><span className="learning-content-type">{contenidoActivo.elemento.tipo} · {contenidoActivo.elemento.contenidoTipo}</span>{contenidoActivo.elemento.contenidoTipo==="Video"?<div className="video-placeholder"><BookOpen size={32}/><strong>Recurso audiovisual del curso</strong><span>{contenidoActivo.elemento.contenido}</span></div>:contenidoActivo.elemento.tipo==="EVALUACION"?<div className="assessment-preview"><FileQuestion size={30}/><h3>Evaluación disponible</h3><p>{contenidoActivo.elemento.contenido}</p><button onClick={()=>setMensaje("La evaluación se abrirá en la experiencia real del estudiante.")}>Comenzar evaluación</button></div>:contenidoActivo.elemento.tipo==="FORO"?<div className="forum-preview"><MessageSquareText size={30}/><h3>Participa en el foro</h3><p>{contenidoActivo.elemento.contenido}</p><textarea aria-label="Respuesta de vista previa" placeholder="Escribe una respuesta de prueba…"/><button onClick={()=>setMensaje("La participación se habilitará al publicar la ruta.")}>Publicar respuesta</button></div>:<div className="text-content-preview">{contenidoActivo.elemento.contenido}</div>}</article><footer className="learning-navigation"><button disabled={activePreview===0} onClick={()=>setActivePreview((actual)=>Math.max(0,actual-1))}><ChevronLeft size={17}/>Anterior</button><span>{activePreview+1} de {contenidosVisibles.length}</span><button disabled={activePreview===contenidosVisibles.length-1} onClick={()=>setActivePreview((actual)=>Math.min(contenidosVisibles.length-1,actual+1))}>Siguiente<ChevronRight size={17}/></button></footer></>:<div className="learning-no-content"><FolderOpen size={36}/><h2>No hay contenido publicado</h2><p>Publica al menos un paso para visualizar la experiencia del estudiante.</p></div>}</div></div></section></div>}
+    {editor?.kind==="ELEMENTO"&&<div className="modal-backdrop"><section className="modal lms-editor-modal" role="dialog" aria-modal="true" aria-labelledby="elemento-title"><header><div><span className="page-kicker">{editor.tipo}</span><h2 id="elemento-title">{elementoEditado?"Editar":"Agregar"} {editor.tipo==="PASO"?"paso":editor.tipo==="EVALUACION"?"evaluación":"foro"}</h2><p>Configura el contenido, requisito de avance y estado de publicación.</p></div><button className="icon-button" onClick={()=>setEditor(null)} aria-label="Cerrar editor de contenido"><X size={18}/></button></header><form onSubmit={guardarElemento}><div className="form-row lms-title-row"><label className="form-field"><span>Título *</span><input name="titulo" required defaultValue={elementoEditado?.titulo}/></label><ResourceContentFields elemento={elementoEditado} tipoInicial={editor.tipo==="EVALUACION"?"Cuestionario":"Texto"} esEvaluacion={editor.tipo==="EVALUACION"}/></div><label className="form-field"><span>Descripción</span><textarea name="descripcion" rows={3} defaultValue={elementoEditado?.descripcion}/></label><div className="form-row lms-config-row"><label className="form-field"><span>Tiempo (min)</span><input name="tiempo" type="number" min="0" defaultValue={elementoEditado?.tiempo??0}/></label><label className="form-field"><span>Requisito</span><select name="requisito" defaultValue={elementoEditado?.requisito??"Libre"}><option>Libre</option><option>Completar paso anterior</option><option>Completar módulo anterior</option><option>Completar módulo</option></select></label><label className="form-field"><span>Estado</span><select name="estado" defaultValue={elementoEditado?.estado??"Borrador"}><option>Borrador</option><option>Publicado</option><option>Programado</option><option>Abierto</option></select></label></div><footer><button className="btn btn-secondary" type="button" onClick={()=>setEditor(null)}>Cancelar</button><button className="btn btn-primary" type="submit">Guardar {editor.tipo==="PASO"?"paso":editor.tipo==="EVALUACION"?"evaluación":"foro"}</button></footer></form></section></div>}
+    {preview&&<div className="learning-preview-backdrop"><section className="learning-preview" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header className="learning-preview-top"><strong>Vista del estudiante</strong><button onClick={()=>setPreview(false)} aria-label="Cerrar vista del estudiante"><X size={21}/></button></header><div className="learning-hero"><div><span>RUTA DE APRENDIZAJE</span><h2 id="preview-title">Analítica de datos aplicada</h2><p>Aprende a transformar información en decisiones mediante una experiencia práctica y progresiva.</p></div><div className="learning-progress-ring"><strong>{Math.min(activePreview+1,contenidosVisibles.length)}/{contenidosVisibles.length}</strong><span>contenidos</span></div></div><div className="learning-experience"><aside><h3>Contenido del curso</h3>{modulos.map((modulo,moduleIndex)=>{const visibles=contenidosVisibles.filter((item)=>item.moduleIndex===moduleIndex);if(visibles.length===0)return null;return <div className="learning-module-list" key={modulo.id}><strong>{modulo.titulo}</strong>{visibles.map((item)=>{const globalIndex=contenidosVisibles.indexOf(item);return <button className={globalIndex===activePreview?"is-active":""} onClick={()=>setActivePreview(globalIndex)} key={item.elemento.id}><span>{globalIndex+1}</span><div><b>{item.elemento.titulo}</b><small>{item.elemento.contenidoTipo} · {item.elemento.tiempo} min</small></div></button>})}</div>})}</aside><div className="learning-main">{contenidoActivo?<><span className="learning-current-module">{contenidoActivo.modulo.titulo}</span><h2>{contenidoActivo.elemento.titulo}</h2><p className="learning-description">{contenidoActivo.elemento.descripcion}</p><article className={`learning-content learning-content-${contenidoActivo.elemento.tipo.toLowerCase()}`}><span className="learning-content-type">{contenidoActivo.elemento.tipo} · {contenidoActivo.elemento.contenidoTipo}</span>{contenidoActivo.elemento.tipo==="EVALUACION"?<div className="assessment-preview"><FileQuestion size={30}/><h3>Evaluación disponible</h3><p>{contenidoActivo.elemento.contenido}</p><button onClick={()=>setMensaje("La evaluación se abrirá en la experiencia real del estudiante.")}>Comenzar evaluación</button></div>:contenidoActivo.elemento.tipo==="FORO"?<div className="forum-preview"><MessageSquareText size={30}/><h3>Participa en el foro</h3><p>{contenidoActivo.elemento.contenido}</p><textarea aria-label="Respuesta de vista previa" placeholder="Escribe una respuesta de prueba…"/><button onClick={()=>setMensaje("La participación se habilitará al publicar la ruta.")}>Publicar respuesta</button></div>:<ResourceViewer elemento={contenidoActivo.elemento}/>}</article><footer className="learning-navigation"><button disabled={activePreview===0} onClick={()=>setActivePreview((actual)=>Math.max(0,actual-1))}><ChevronLeft size={17}/>Anterior</button><span>{activePreview+1} de {contenidosVisibles.length}</span><button disabled={activePreview===contenidosVisibles.length-1} onClick={()=>setActivePreview((actual)=>Math.min(contenidosVisibles.length-1,actual+1))}>Siguiente<ChevronRight size={17}/></button></footer></>:<div className="learning-no-content"><FolderOpen size={36}/><h2>No hay contenido publicado</h2><p>Publica al menos un paso para visualizar la experiencia del estudiante.</p></div>}</div></div></section></div>}
   </>;
 }
 
@@ -95,7 +231,7 @@ export function StudentLearningPath(){
     <section className="student-learning-page panel">
       <div className="learning-hero"><div><span>CURSO ACTIVO</span><h2>Analítica de datos aplicada</h2><p>Aprende a transformar información en decisiones mediante una experiencia práctica y progresiva.</p></div><div className="learning-progress-ring"><strong>{active+1}/{contents.length}</strong><span>contenidos</span></div></div>
       <div className="learning-experience"><aside><h3>Contenido del curso</h3>{modulosIniciales.map((modulo,moduleIndex)=>{const visible=contents.filter((item)=>item.moduleIndex===moduleIndex);if(!visible.length)return null;return <div className="learning-module-list" key={modulo.id}><strong>{modulo.titulo}</strong>{visible.map((item)=>{const index=contents.indexOf(item);return <button className={index===active?"is-active":""} onClick={()=>setActive(index)} key={item.elemento.id}><span>{index+1}</span><div><b>{item.elemento.titulo}</b><small>{item.elemento.contenidoTipo} · {item.elemento.tiempo} min</small></div></button>})}</div>})}</aside>
-        <div className="learning-main"><span className="learning-current-module">{current.modulo.titulo}</span><h2>{current.elemento.titulo}</h2><p className="learning-description">{current.elemento.descripcion}</p><article className={`learning-content learning-content-${current.elemento.tipo.toLowerCase()}`}><span className="learning-content-type">{current.elemento.tipo} · {current.elemento.contenidoTipo}</span>{current.elemento.contenidoTipo==="Video"?<div className="video-placeholder"><BookOpen size={32}/><strong>Recurso audiovisual del curso</strong><span>{current.elemento.contenido}</span><button onClick={()=>setMessage("Reproducción iniciada en modo demostración.")}>Reproducir contenido</button></div>:current.elemento.tipo==="EVALUACION"?<div className="assessment-preview"><FileQuestion size={30}/><h3>Evaluación disponible</h3><p>{current.elemento.contenido}</p><button onClick={()=>setMessage("Evaluación iniciada. Tus respuestas se guardarán al finalizar.")}>Comenzar evaluación</button></div>:current.elemento.tipo==="FORO"?<div className="forum-preview"><MessageSquareText size={30}/><h3>Participa en el foro</h3><p>{current.elemento.contenido}</p><textarea aria-label="Respuesta del estudiante" placeholder="Escribe tu aporte…"/><button onClick={()=>setMessage("Tu participación fue registrada.")}>Publicar respuesta</button></div>:<div className="text-content-preview">{current.elemento.contenido}</div>}</article><footer className="learning-navigation"><button disabled={active===0} onClick={()=>setActive((value)=>Math.max(0,value-1))}><ChevronLeft size={17}/>Anterior</button><span>{active+1} de {contents.length}</span><button disabled={active===contents.length-1} onClick={()=>setActive((value)=>Math.min(contents.length-1,value+1))}>Siguiente<ChevronRight size={17}/></button></footer></div>
+        <div className="learning-main"><span className="learning-current-module">{current.modulo.titulo}</span><h2>{current.elemento.titulo}</h2><p className="learning-description">{current.elemento.descripcion}</p><article className={`learning-content learning-content-${current.elemento.tipo.toLowerCase()}`}><span className="learning-content-type">{current.elemento.tipo} · {current.elemento.contenidoTipo}</span>{current.elemento.tipo==="EVALUACION"?<div className="assessment-preview"><FileQuestion size={30}/><h3>Evaluación disponible</h3><p>{current.elemento.contenido}</p><button onClick={()=>setMessage("Evaluación iniciada. Tus respuestas se guardarán al finalizar.")}>Comenzar evaluación</button></div>:current.elemento.tipo==="FORO"?<div className="forum-preview"><MessageSquareText size={30}/><h3>Participa en el foro</h3><p>{current.elemento.contenido}</p><textarea aria-label="Respuesta del estudiante" placeholder="Escribe tu aporte…"/><button onClick={()=>setMessage("Tu participación fue registrada.")}>Publicar respuesta</button></div>:<ResourceViewer elemento={current.elemento}/>}</article><footer className="learning-navigation"><button disabled={active===0} onClick={()=>setActive((value)=>Math.max(0,value-1))}><ChevronLeft size={17}/>Anterior</button><span>{active+1} de {contents.length}</span><button disabled={active===contents.length-1} onClick={()=>setActive((value)=>Math.min(contents.length-1,value+1))}>Siguiente<ChevronRight size={17}/></button></footer></div>
       </div>
     </section>
   </>;

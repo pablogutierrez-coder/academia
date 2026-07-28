@@ -166,11 +166,30 @@ const attendance=[
   {id:"SES-0725-02",cursoId:"CUR-MK-2026-02",grupoId:ids.groupMarketing,claseId:"CL-301",fecha:new Date("2026-07-25"),programados:28,presentes:23,tardanzas:2,faltas:3,estado:"CERRADA"},
   {id:"SES-0724-01",cursoId:"CUR-AD-2026-03",grupoId:ids.groupAnalytics,claseId:"CL-204",fecha:new Date("2026-07-24"),programados:24,presentes:19,tardanzas:2,faltas:3,estado:"CERRADA"},
 ];
-for(const session of attendance) add(orgDoc("attendanceSessions",session.id),session);
+for(const session of attendance){
+  add(orgDoc("attendanceSessions",session.id),session);
+  const classItem=classSeeds.find(([id])=>id===session.claseId);
+  const openedAt=classItem?new Date(classItem[3]):new Date(session.fecha);
+  add(orgDoc("attendanceWindows",session.claseId),{
+    classId:session.claseId,courseId:session.cursoId,groupId:session.grupoId,
+    teacherId:classItem?.[2]??ids.teacherOscar,openedAt,closesAt:new Date(openedAt.getTime()+30*60*1000),
+    durationMinutes:30,status:"VALIDATED",openedBy:classItem?.[2]??ids.teacherOscar,
+    validatedAt:new Date(openedAt.getTime()+95*60*1000),validatedBy:classItem?.[2]??ids.teacherOscar,
+    createdAt:openedAt,updatedAt:new Date(openedAt.getTime()+95*60*1000),
+  });
+}
 const marks=[
   [ids.studentMariana,"PRESENTE",0],[ids.studentLuis,"FALTA",0],[ids.studentAndrea,"TARDANZA",18],[ids.studentCarlos,"FALTA",0],
 ];
-for(const [studentId,status,minutes] of marks) add(orgDoc("attendanceSessions","SES-0726-01").collection("marks").doc(studentId),{estudianteId:studentId,estado:status,minutosTardanza:minutes,registradoAt:new Date(),registradoPor:ids.teacherOscar});
+for(const [studentId,status,minutes] of marks){
+  add(orgDoc("attendanceSessions","SES-0726-01").collection("marks").doc(studentId),{estudianteId:studentId,estado:status,minutosTardanza:minutes,registradoAt:new Date(),registradoPor:ids.teacherOscar});
+  add(orgDoc("attendanceMarks",`CL-206_${studentId}`),{
+    classId:"CL-206",courseId:"CUR-AD-2026-03",groupId:ids.groupAnalytics,studentId,
+    status,source:"TEACHER_VALIDATION",markedAt:status==="FALTA"?null:new Date("2026-07-20T23:05:00Z"),
+    validationStatus:"VALIDATED",validatedAt:new Date("2026-07-21T00:35:00Z"),validatedBy:ids.teacherOscar,
+    observation:status==="TARDANZA"?`${minutes} minutos de tardanza`:"",createdAt:new Date(),updatedAt:new Date(),
+  });
+}
 
 for(const course of courses.slice(0,2)){
   const route=orgDoc("learningPaths",course.id);

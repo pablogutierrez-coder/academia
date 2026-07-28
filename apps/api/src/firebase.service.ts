@@ -79,10 +79,28 @@ export type CreateFirebaseUser = {
   passwordHash: string;
 };
 
+export type AttendanceValidationInput = {
+  studentId: string;
+  status: "PRESENTE" | "TARDANZA" | "FALTA" | "JUSTIFICADA";
+  observation?: string;
+};
+
 const activeClassStates = new Set(["BORRADOR", "PENDIENTE_APROBACION", "PROGRAMADA", "CONFIRMADA", "EN_EJECUCION", "EJECUTADA"]);
 
 function normalizeSnapshot(snapshot: QueryDocumentSnapshot<DocumentData>): DocumentData & { id: string } {
   return { id: snapshot.id, ...snapshot.data() };
+}
+
+function firestoreDate(value: unknown) {
+  if (value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    return (value as { toDate: () => Date }).toDate();
+  }
+  const parsed = value instanceof Date ? value : new Date(String(value ?? ""));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isoDate(value: unknown) {
+  return firestoreDate(value)?.toISOString() ?? null;
 }
 
 function firebaseCredential() {
@@ -193,6 +211,336 @@ export class FirebaseService {
     return result.docs.map(normalizeSnapshot);
   }
 
+  private attendanceState(session: DocumentData | undefined) {
+    if (!session) return "NOT_OPEN";
+    if (session.status === "VALIDATED") return "VALIDATED";
+    const closesAt = firestoreDate(session.closesAt);
+    return closesAt && closesAt.getTime() > Date.now() ? "OPEN" : "CLOSED";
+  }
+
+  private async attendanceContext(orgId: string) {
+    const org = this.organization(orgId);
+    const [classes, groups, courses, windows] = await Promise.all([
+      org.collection("classes").get(),
+      org.collection("groups").get(),
+      org.collection("courses").get(),
+      org.collection("attendanceWindows").get(),
+    ]);
+    return {
+      org,
+      classes: classes.docs.map(normalizeSnapshot),
+      groups: new Map(groups.docs.map((document) => [document.id, normalizeSnapshot(document)])),
+      courses: new Map(courses.docs.map((document) => [document.id, normalizeSnapshot(document)])),
+      windows: new Map(windows.docs.map((document) => [document.id, normalizeSnapshot(document)])),
+    };
+  }
+
+  private attendanceSessionView(
+    classDocument: DocumentData & { id: string },
+    group: (DocumentData & { id: string }) | undefined,
+    course: (DocumentData & { id: string }) | undefined,
+    window: (DocumentData & { id: string }) | undefined,
+  ) {
+    return {
+      id: classDocument.id,
+      title: String(classDocument.titulo ?? "Sesión académica"),
+      startsAt: isoDate(classDocument.inicio),
+      endsAt: isoDate(classDocument.fin),
+      classStatus: String(classDocument.estado ?? "PROGRAMADA"),
+      groupId: String(classDocument.grupoId ?? ""),
+      groupCode: String(group?.codigo ?? classDocument.grupoId ?? ""),
+      courseId: String(group?.cursoId ?? ""),
+      courseName: String(course?.nombre ?? group?.cursoId ?? "Curso"),
+      window: window ? {
+        status: this.attendanceState(window),
+        openedAt: isoDate(window.openedAt),
+        closesAt: isoDate(window.closesAt),
+        validatedAt: isoDate(window.validatedAt),
+        durationMinutes: Number(window.durationMinutes ?? 30),
+      } : {
+        status: "NOT_OPEN",
+        openedAt: null,
+        closesAt: null,
+        validatedAt: null,
+        durationMinutes: 30,
+      },
+    };
+  }
+
+  async teacherAttendanceSessions(orgId: string, userId: string, profile?: string) {
+    const context = await this.attendanceContext(orgId);
+    const allowedGroups = profile === "Administrador"
+      ? null
+      : new Set([...context.groups.values()].filter((group) => group.docenteId === userId).map((group) => group.id));
+    if (profile !== "Administrador" && profile !== "Docente") throw new ForbiddenException("El perfil no puede gestionar asistencias");
+    return context.classes
+      .filter((classDocument) => allowedGroups === null || allowedGroups.has(String(classDocument.grupoId)))
+      .map((classDocument) => {
+        const group = context.groups.get(String(classDocument.grupoId));
+        const course = group ? context.courses.get(String(group.cursoId)) : undefined;
+        return this.attendanceSessionView(classDocument, group, course, context.windows.get(classDocument.id));
+      })
+      .sort((a, b) => String(b.startsAt).localeCompare(String(a.startsAt)));
+  }
+
+  private async assertTeacherClass(orgId: string, userId: string, profile: string | undefined, classId: string) {
+    if (profile !== "Administrador" && profile !== "Docente") throw new ForbiddenException("El perfil no puede gestionar asistencias");
+    const org = this.organization(orgId);
+    const classSnapshot = await org.collection("classes").doc(classId).get();
+    if (!classSnapshot.exists) throw new NotFoundException("La sesión académica no existe");
+    const classDocument: DocumentData & { id: string } = { id: classSnapshot.id, ...classSnapshot.data()! };
+    const groupSnapshot = await org.collection("groups").doc(String(classDocument.grupoId)).get();
+    if (!groupSnapshot.exists) throw new NotFoundException("El grupo de la sesión no existe");
+    const group: DocumentData & { id: string } = { id: groupSnapshot.id, ...groupSnapshot.data()! };
+    if (profile !== "Administrador" && group.docenteId !== userId) throw new ForbiddenException("La sesión no está asignada al docente");
+    return { org, classDocument, group };
+  }
+
+  async openAttendanceWindow(orgId: string, userId: string, profile: string | undefined, classId: string) {
+    const { org, classDocument, group } = await this.assertTeacherClass(orgId, userId, profile, classId);
+    const reference = org.collection("attendanceWindows").doc(classId);
+    const now = new Date();
+    const closesAt = new Date(now.getTime() + 30 * 60 * 1000);
+    await this.db().runTransaction(async (transaction) => {
+      const current = await transaction.get(reference);
+      if (current.exists) {
+        const state = this.attendanceState(current.data());
+        if (state === "OPEN") throw new ConflictException("La marcación ya se encuentra habilitada");
+        if (state === "VALIDATED") throw new ConflictException("La asistencia ya fue validada");
+        throw new ConflictException("La ventana de marcación ya finalizó y no puede volver a abrirse");
+      }
+      transaction.create(reference, {
+        classId,
+        courseId: String(group.cursoId ?? ""),
+        groupId: group.id,
+        teacherId: String(group.docenteId ?? classDocument.docenteId ?? userId),
+        openedAt: now,
+        closesAt,
+        durationMinutes: 30,
+        status: "OPEN",
+        openedBy: userId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      transaction.create(org.collection("audit").doc(), {
+        usuarioId: userId,
+        accion: "HABILITAR_MARCACION",
+        entidad: "AttendanceWindow",
+        entidadId: classId,
+        modulo: "asistencia",
+        correlacion: crypto.randomUUID(),
+        createdAt: now,
+      });
+    });
+    return { classId, status: "OPEN", openedAt: now.toISOString(), closesAt: closesAt.toISOString(), durationMinutes: 30 };
+  }
+
+  private async enrollmentStudents(orgId: string, groupId: string, courseId: string) {
+    const org = this.organization(orgId);
+    const [enrollments, students] = await Promise.all([
+      org.collection("enrollments").get(),
+      org.collection("students").get(),
+    ]);
+    const enrolledIds = new Set(enrollments.docs
+      .filter((document) => {
+        const data = document.data();
+        return data.estado !== "INACTIVO" &&
+          (String(data.grupoId ?? "") === groupId || (!data.grupoId && String(data.cursoId ?? "") === courseId));
+      })
+      .map((document) => String(document.data().estudianteId)));
+    return students.docs
+      .filter((document) => enrolledIds.has(document.id) && document.data().deletedAt == null)
+      .map((document) => {
+        const data = document.data();
+        return {
+          id: document.id,
+          name: String(data.nombre ?? `${data.nombres ?? ""} ${data.apellidos ?? ""}`).trim() || document.id,
+          document: String(data.documento ?? data.dni ?? document.id),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }
+
+  async teacherAttendanceDetail(orgId: string, userId: string, profile: string | undefined, classId: string) {
+    const { org, classDocument, group } = await this.assertTeacherClass(orgId, userId, profile, classId);
+    const courseId = String(group.cursoId ?? "");
+    const [courseSnapshot, windowSnapshot, marks, students] = await Promise.all([
+      org.collection("courses").doc(courseId).get(),
+      org.collection("attendanceWindows").doc(classId).get(),
+      org.collection("attendanceMarks").where("classId", "==", classId).get(),
+      this.enrollmentStudents(orgId, group.id, courseId),
+    ]);
+    const markMap = new Map(marks.docs.map((document) => [String(document.data().studentId), normalizeSnapshot(document)]));
+    const window = windowSnapshot.exists ? { id: windowSnapshot.id, ...windowSnapshot.data()! } : undefined;
+    const session = this.attendanceSessionView(
+      classDocument,
+      group,
+      courseSnapshot.exists ? { id: courseSnapshot.id, ...courseSnapshot.data()! } : undefined,
+      window,
+    );
+    return {
+      session,
+      students: students.map((student) => {
+        const mark = markMap.get(student.id);
+        return {
+          ...student,
+          status: mark ? String(mark.status ?? "PRESENTE") : "PENDING",
+          source: mark ? String(mark.source ?? "STUDENT") : null,
+          markedAt: mark ? isoDate(mark.markedAt) : null,
+          validationStatus: mark ? String(mark.validationStatus ?? "PENDING") : "PENDING",
+          observation: mark ? String(mark.observation ?? "") : "",
+        };
+      }),
+    };
+  }
+
+  async validateAttendance(
+    orgId: string,
+    userId: string,
+    profile: string | undefined,
+    classId: string,
+    records: AttendanceValidationInput[],
+  ) {
+    const { org, group } = await this.assertTeacherClass(orgId, userId, profile, classId);
+    const windowReference = org.collection("attendanceWindows").doc(classId);
+    const windowSnapshot = await windowReference.get();
+    if (!windowSnapshot.exists) throw new BadRequestException("Primero debes habilitar la marcación");
+    if (windowSnapshot.data()?.status === "VALIDATED") throw new ConflictException("La asistencia ya fue validada");
+    const closesAt = firestoreDate(windowSnapshot.data()?.closesAt);
+    if (closesAt && closesAt.getTime() > Date.now()) throw new BadRequestException("La ventana de marcación aún está abierta");
+    const students = await this.enrollmentStudents(orgId, group.id, String(group.cursoId ?? ""));
+    const enrolledIds = new Set(students.map((student) => student.id));
+    const submittedIds = new Set(records.map((record) => record.studentId));
+    if (!records.length || submittedIds.size !== enrolledIds.size || records.some((record) => !enrolledIds.has(record.studentId))) {
+      throw new BadRequestException("La validación debe incluir una marca final para cada estudiante asignado");
+    }
+    const now = new Date();
+    const batch = this.db().batch();
+    for (const record of records) {
+      const reference = org.collection("attendanceMarks").doc(`${classId}_${record.studentId}`);
+      batch.set(reference, {
+        classId,
+        courseId: String(group.cursoId ?? ""),
+        groupId: group.id,
+        studentId: record.studentId,
+        status: record.status,
+        source: "TEACHER_VALIDATION",
+        validationStatus: "VALIDATED",
+        validatedAt: now,
+        validatedBy: userId,
+        observation: record.observation ?? "",
+        updatedAt: now,
+      }, { merge: true });
+    }
+    batch.set(windowReference, { status: "VALIDATED", validatedAt: now, validatedBy: userId, updatedAt: now }, { merge: true });
+    batch.set(org.collection("audit").doc(), {
+      usuarioId: userId,
+      accion: "VALIDAR_ASISTENCIA",
+      entidad: "AttendanceWindow",
+      entidadId: classId,
+      modulo: "asistencia",
+      correlacion: crypto.randomUUID(),
+      createdAt: now,
+    });
+    await batch.commit();
+    return { classId, status: "VALIDATED", validatedAt: now.toISOString(), records: records.length };
+  }
+
+  async studentAttendance(orgId: string, userId: string, profile?: string) {
+    if (profile !== "Administrador" && profile !== "Estudiante") throw new ForbiddenException("El perfil no puede marcar su asistencia");
+    const context = await this.attendanceContext(orgId);
+    const enrollmentsSnapshot = await context.org.collection("enrollments").where("estudianteId", "==", userId).get();
+    const enrollments = enrollmentsSnapshot.docs.filter((document) => document.data().estado !== "INACTIVO").map((document) => document.data());
+    const courseIds = new Set(enrollments.map((item) => String(item.cursoId ?? "")).filter(Boolean));
+    const groupIds = new Set(enrollments.map((item) => String(item.grupoId ?? "")).filter(Boolean));
+    const marksSnapshot = await context.org.collection("attendanceMarks").where("studentId", "==", userId).get();
+    const marks = new Map(marksSnapshot.docs.map((document) => [String(document.data().classId), normalizeSnapshot(document)]));
+    const sessions = context.classes
+      .filter((classDocument) => {
+        const group = context.groups.get(String(classDocument.grupoId));
+        return group && (groupIds.has(group.id) || courseIds.has(String(group.cursoId ?? "")));
+      })
+      .map((classDocument) => {
+        const group = context.groups.get(String(classDocument.grupoId))!;
+        const course = context.courses.get(String(group.cursoId));
+        const session = this.attendanceSessionView(classDocument, group, course, context.windows.get(classDocument.id));
+        const mark = marks.get(classDocument.id);
+        return {
+          ...session,
+          mark: mark ? {
+            status: String(mark.status ?? "PRESENTE"),
+            markedAt: isoDate(mark.markedAt),
+            validationStatus: String(mark.validationStatus ?? "PENDING"),
+            observation: String(mark.observation ?? ""),
+          } : null,
+        };
+      })
+      .sort((a, b) => String(b.startsAt).localeCompare(String(a.startsAt)));
+    return {
+      courses: [...courseIds].map((courseId) => {
+        const course = context.courses.get(courseId);
+        return { id: courseId, name: String(course?.nombre ?? courseId), progress: Number(course?.progreso ?? 0) };
+      }),
+      sessions,
+    };
+  }
+
+  async studentCheckIn(orgId: string, userId: string, profile: string | undefined, classId: string) {
+    if (profile !== "Administrador" && profile !== "Estudiante") throw new ForbiddenException("El perfil no puede marcar su asistencia");
+    const org = this.organization(orgId);
+    const [classSnapshot, windowSnapshot] = await Promise.all([
+      org.collection("classes").doc(classId).get(),
+      org.collection("attendanceWindows").doc(classId).get(),
+    ]);
+    if (!classSnapshot.exists) throw new NotFoundException("La sesión académica no existe");
+    if (!windowSnapshot.exists || this.attendanceState(windowSnapshot.data()) !== "OPEN") {
+      throw new BadRequestException("La ventana de marcación no está habilitada o ya finalizó");
+    }
+    const groupId = String(classSnapshot.data()?.grupoId ?? "");
+    const groupSnapshot = await org.collection("groups").doc(groupId).get();
+    if (!groupSnapshot.exists) throw new NotFoundException("El grupo de la sesión no existe");
+    const courseId = String(groupSnapshot.data()?.cursoId ?? "");
+    const enrollments = await org.collection("enrollments").where("estudianteId", "==", userId).get();
+    const enrolled = enrollments.docs.some((document) => {
+      const data = document.data();
+      return data.estado !== "INACTIVO" &&
+        (String(data.grupoId ?? "") === groupId || (!data.grupoId && String(data.cursoId ?? "") === courseId));
+    });
+    if (!enrolled) throw new ForbiddenException("No estás matriculado en esta sesión");
+    const markReference = org.collection("attendanceMarks").doc(`${classId}_${userId}`);
+    const now = new Date();
+    await this.db().runTransaction(async (transaction) => {
+      const current = await transaction.get(markReference);
+      if (current.exists) throw new ConflictException("Tu asistencia ya fue registrada");
+      const currentWindow = await transaction.get(windowSnapshot.ref);
+      if (!currentWindow.exists || this.attendanceState(currentWindow.data()) !== "OPEN") {
+        throw new BadRequestException("La ventana de marcación ya finalizó");
+      }
+      transaction.create(markReference, {
+        classId,
+        courseId,
+        groupId,
+        studentId: userId,
+        status: "PRESENTE",
+        source: "STUDENT",
+        markedAt: now,
+        validationStatus: "PENDING",
+        createdAt: now,
+        updatedAt: now,
+      });
+      transaction.create(org.collection("audit").doc(), {
+        usuarioId: userId,
+        accion: "MARCAR_ASISTENCIA",
+        entidad: "AttendanceMark",
+        entidadId: `${classId}_${userId}`,
+        modulo: "asistencia",
+        correlacion: crypto.randomUUID(),
+        createdAt: now,
+      });
+    });
+    return { classId, status: "PRESENTE", markedAt: now.toISOString(), validationStatus: "PENDING" };
+  }
+
   private async accessibleCourseIds(orgId: string, userId: string, profile?: string) {
     const org = this.organization(orgId);
     if (profile === "Administrador" || profile === "Gestión al estudiante") return null;
@@ -290,7 +638,7 @@ export class FirebaseService {
         descripcion: String(data.descripcion ?? ""),
         estado: String(data.estado ?? "Borrador").toLowerCase().replace(/^\p{L}/u, (letter) => letter.toUpperCase()),
         orden: Number(data.orden ?? 0),
-        elementos: [...elements, ...evaluations].sort((a, b) => a.orden - b.orden).map(({ orden: _order, ...element }) => element),
+        elementos: [...elements, ...evaluations].sort((a, b) => a.orden - b.orden).map(({ orden, ...element }) => { void orden; return element; }),
       };
     }));
     const routeData = route.data() ?? {};
@@ -301,7 +649,7 @@ export class FirebaseService {
       descripcion: String(routeData.descripcion ?? "Ruta de aprendizaje del curso."),
       estado: String(routeData.estado ?? "BORRADOR"),
       version: Number(routeData.version ?? 0),
-      modulos: modules.sort((a, b) => a.orden - b.orden).map(({ orden: _order, ...module }) => module),
+      modulos: modules.sort((a, b) => a.orden - b.orden).map(({ orden, ...module }) => { void orden; return module; }),
     };
   }
 

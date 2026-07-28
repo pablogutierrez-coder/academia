@@ -17,8 +17,9 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ForumExperience } from "./module-functions";
+import { api } from "../lib/api";
 
 const courses = ["Analítica de datos aplicada", "Estrategias de marketing digital"] as const;
 type Course = typeof courses[number];
@@ -138,45 +139,79 @@ export function StudentCalendar() {
   </>;
 }
 
-type AttendanceCourse = {
-  attendance: number;
-  progress: number;
-  sessions: Array<{ date: string; session: string; status: "Presente" | "Tardanza" | "Falta"; observation: string }>;
+type StudentAttendanceCourse={id:string;name:string;progress:number};
+type StudentAttendanceSession={
+  id:string;title:string;startsAt:string|null;endsAt:string|null;groupCode:string;courseId:string;courseName:string;
+  window:{status:"NOT_OPEN"|"OPEN"|"CLOSED"|"VALIDATED";openedAt:string|null;closesAt:string|null;validatedAt:string|null;durationMinutes:number};
+  mark:{status:string;markedAt:string|null;validationStatus:string;observation:string}|null;
 };
-const attendanceData: Record<Course, AttendanceCourse> = {
-  "Analítica de datos aplicada": { attendance: 94, progress: 72, sessions: [
-    { date: "06/07/2026", session: "Sesión 1 · Introducción", status: "Presente", observation: "Registro puntual" },
-    { date: "08/07/2026", session: "Sesión 2 · Fuentes de datos", status: "Presente", observation: "Registro puntual" },
-    { date: "13/07/2026", session: "Sesión 3 · Limpieza", status: "Tardanza", observation: "12 minutos" },
-    { date: "15/07/2026", session: "Sesión 4 · Visualización", status: "Presente", observation: "Registro puntual" },
-    { date: "20/07/2026", session: "Sesión 5 · Indicadores", status: "Presente", observation: "Registro puntual" },
-  ]},
-  "Estrategias de marketing digital": { attendance: 83, progress: 61, sessions: [
-    { date: "07/07/2026", session: "Sesión 1 · Audiencias", status: "Presente", observation: "Registro puntual" },
-    { date: "09/07/2026", session: "Sesión 2 · Canales", status: "Falta", observation: "Sin justificación" },
-    { date: "14/07/2026", session: "Sesión 3 · Contenidos", status: "Tardanza", observation: "8 minutos" },
-    { date: "16/07/2026", session: "Sesión 4 · Campañas", status: "Presente", observation: "Registro puntual" },
-    { date: "21/07/2026", session: "Sesión 5 · Métricas", status: "Presente", observation: "Registro puntual" },
-  ]},
-};
+type StudentAttendanceResponse={courses:StudentAttendanceCourse[];sessions:StudentAttendanceSession[]};
+
+function studentAttendanceDate(value:string|null){
+  return value?new Intl.DateTimeFormat("es-PE",{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)):"Sin fecha";
+}
+
+function studentAttendanceCountdown(value:string|null,now:number){
+  if(!value)return"";
+  const seconds=Math.max(0,Math.ceil((new Date(value).getTime()-now)/1000));
+  return `${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;
+}
 
 export function StudentAttendance() {
-  const [course, setCourse] = useState<Course>(courses[0]);
-  const [status, setStatus] = useState("TODOS");
-  const data = attendanceData[course];
-  const visible = data.sessions.filter((item) => status === "TODOS" || item.status === status);
-  const present = data.sessions.filter((item) => item.status === "Presente").length;
-  const late = data.sessions.filter((item) => item.status === "Tardanza").length;
-  const absent = data.sessions.filter((item) => item.status === "Falta").length;
+  const [data,setData]=useState<StudentAttendanceResponse>({courses:[],sessions:[]});
+  const [courseId,setCourseId]=useState("");
+  const [status,setStatus]=useState("TODOS");
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState("");
+  const [error,setError]=useState("");
+  const [now,setNow]=useState(Date.now());
+  async function loadAttendance(silent=false){
+    if(!silent)setLoading(true);
+    try{
+      const response=await api<StudentAttendanceResponse>("/academico/attendance/student");
+      setData(response);setCourseId((current)=>current||response.courses[0]?.id||"");setError("");
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo cargar tu asistencia");}
+    finally{if(!silent)setLoading(false);}
+  }
+  useEffect(()=>{void loadAttendance();const polling=window.setInterval(()=>void loadAttendance(true),15000);return()=>window.clearInterval(polling);},[]);
+  useEffect(()=>{const ticker=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(ticker);},[]);
+  const course=data.courses.find((item)=>item.id===courseId);
+  const sessions=data.sessions.filter((item)=>item.courseId===courseId);
+  const sessionState=(session:StudentAttendanceSession)=>session.window.status==="OPEN"&&session.window.closesAt&&new Date(session.window.closesAt).getTime()<=now?"CLOSED":session.window.status;
+  const openSession=sessions.find((session)=>sessionState(session)==="OPEN"&&!session.mark);
+  const visible=sessions.filter((session)=>status==="TODOS"||(session.mark?.status??(sessionState(session)==="CLOSED"?"FALTA":"PENDIENTE"))===status);
+  const validated=sessions.filter((session)=>session.mark?.validationStatus==="VALIDATED");
+  const present=validated.filter((session)=>session.mark?.status==="PRESENTE").length;
+  const late=validated.filter((session)=>session.mark?.status==="TARDANZA").length;
+  const absent=validated.filter((session)=>session.mark?.status==="FALTA").length;
+  const attendance=validated.length?Math.round(((present+late)/validated.length)*100):0;
+  async function checkIn(){
+    if(!openSession)return;
+    setBusy(true);setMessage("");setError("");
+    try{
+      await api(`/academico/attendance/sessions/${openSession.id}/check-in`,{method:"POST"});
+      setMessage("Tu asistencia fue registrada y quedó pendiente de validación docente.");
+      await loadAttendance(true);
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo registrar tu asistencia");}
+    finally{setBusy(false);}
+  }
   return <>
-    <header className="page-header"><div><span className="page-kicker">Seguimiento académico</span><h1>Mis asistencias</h1><p>Consulta tu asistencia por curso y compárala con tu avance en la ruta de aprendizaje.</p></div></header>
-    <section className="panel student-filter-panel"><label className="form-field"><span>Curso asignado</span><select aria-label="Curso de asistencia" value={course} onChange={(event) => setCourse(event.target.value as Course)}>{courses.map((item) => <option key={item}>{item}</option>)}</select></label><div><strong>{data.attendance}% de asistencia</strong><span>Meta mínima: 80%</span></div></section>
-    <section className="metric-grid compact"><article className="metric-card"><div className="metric-head"><span>Asistencia</span></div><strong>{data.attendance}%</strong><small>En el curso seleccionado</small></article><article className="metric-card"><div className="metric-head"><span>Presentes</span></div><strong>{present}</strong><small>Sesiones registradas</small></article><article className="metric-card"><div className="metric-head"><span>Faltas</span></div><strong>{absent}</strong><small>Revisa tus justificaciones</small></article><article className="metric-card"><div className="metric-head"><span>Tardanzas</span></div><strong>{late}</strong><small>Periodo actual</small></article></section>
-    <section className="student-two-columns">
-      <article className="panel comparison-card"><header className="panel-header"><div><h2>Avance del curso vs. asistencia</h2><p>{course}</p></div></header><div className="comparison-bars"><div><span><strong>Avance académico</strong><b>{data.progress}%</b></span><div><i style={{ width: `${data.progress}%` }}/></div></div><div><span><strong>Asistencia acumulada</strong><b>{data.attendance}%</b></span><div><i className="green" style={{ width: `${data.attendance}%` }}/></div></div></div><p className="comparison-insight">{data.attendance >= 80 ? "Cumples el requisito mínimo de asistencia." : "Tu asistencia está por debajo del mínimo requerido para certificarte."}</p></article>
-      <article className="panel attendance-summary"><header className="panel-header"><div><h2>Resumen académico</h2><p>Relación entre participación y avance.</p></div></header><strong>{Math.round((data.attendance + data.progress) / 2)}%</strong><span>Índice integral del curso</span><small>Combina asistencia y progreso LMS.</small></article>
+    <header className="page-header"><div><span className="page-kicker">Seguimiento académico</span><h1>Mis asistencias</h1><p>Marca tu asistencia durante la ventana habilitada por el docente y consulta su validación.</p></div></header>
+    {message&&<div className="feedback feedback-success"><CheckCircle2 size={16}/>{message}</div>}
+    {error&&<div className="feedback feedback-error">{error}</div>}
+    <section className="panel student-filter-panel"><label className="form-field"><span>Curso asignado</span><select aria-label="Curso de asistencia" disabled={loading} value={courseId} onChange={(event)=>{setCourseId(event.target.value);setMessage("");}}><option value="">{loading?"Cargando cursos...":"Selecciona un curso"}</option>{data.courses.map((item)=><option value={item.id} key={item.id}>{item.name}</option>)}</select></label><div><strong>{attendance}% de asistencia</strong><span>Meta mínima: 80%</span></div></section>
+    <section className={`panel student-checkin-card ${openSession?"is-open":""}`}>
+      <div className="student-checkin-icon">{openSession?<Clock3 size={27}/>:<CheckCircle2 size={27}/>}</div>
+      <div><span className="page-kicker">Marcación personal</span><h2>{openSession?"Asistencia habilitada":"No hay una marcación abierta"}</h2><p>{openSession?`${openSession.title} · ${openSession.groupCode}. Tienes ${studentAttendanceCountdown(openSession.window.closesAt,now)} para registrar tu presencia.`:"Cuando el docente habilite una sesión de este curso, aparecerá aquí el botón para marcar. La pantalla se actualiza automáticamente."}</p>{openSession&&<small>La marca es personal, única y quedará pendiente de validación docente.</small>}</div>
+      <div className="student-checkin-action">{openSession?<><strong>{studentAttendanceCountdown(openSession.window.closesAt,now)}</strong><button className="btn btn-primary" disabled={busy} onClick={checkIn}><Check size={16}/>{busy?"Registrando...":"Marcar mi asistencia"}</button></>:<span className="status-badge info">En espera del docente</span>}</div>
     </section>
-    <section className="panel table-panel"><div className="table-toolbar"><div><h2>Historial de sesiones</h2><p>{visible.length} registros del curso seleccionado</p></div><select aria-label="Filtrar historial por estado" value={status} onChange={(event) => setStatus(event.target.value)}><option value="TODOS">Todos los estados</option><option>Presente</option><option>Tardanza</option><option>Falta</option></select></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Fecha</th><th>Sesión</th><th>Estado</th><th>Observación</th></tr></thead><tbody>{visible.map((item) => <tr key={`${course}-${item.date}`}><td>{item.date}</td><td><strong>{item.session}</strong></td><td><span className={`status-badge ${item.status === "Presente" ? "success" : item.status === "Falta" ? "danger" : "warning"}`}>{item.status}</span></td><td>{item.observation}</td></tr>)}</tbody></table></div></section>
+    <section className="metric-grid compact"><article className="metric-card"><div className="metric-head"><span>Asistencia</span></div><strong>{attendance}%</strong><small>Registros validados</small></article><article className="metric-card"><div className="metric-head"><span>Presentes</span></div><strong>{present}</strong><small>Sesiones validadas</small></article><article className="metric-card"><div className="metric-head"><span>Faltas</span></div><strong>{absent}</strong><small>Revisa tus justificaciones</small></article><article className="metric-card"><div className="metric-head"><span>Tardanzas</span></div><strong>{late}</strong><small>Periodo actual</small></article></section>
+    <section className="student-two-columns">
+      <article className="panel comparison-card"><header className="panel-header"><div><h2>Avance del curso vs. asistencia</h2><p>{course?.name??"Curso seleccionado"}</p></div></header><div className="comparison-bars"><div><span><strong>Avance académico</strong><b>{course?.progress??0}%</b></span><div><i style={{width:`${course?.progress??0}%`}}/></div></div><div><span><strong>Asistencia acumulada</strong><b>{attendance}%</b></span><div><i className="green" style={{width:`${attendance}%`}}/></div></div></div><p className="comparison-insight">{attendance>=80?"Cumples el requisito mínimo de asistencia.":"Tu asistencia está por debajo del mínimo requerido para certificarte."}</p></article>
+      <article className="panel attendance-summary"><header className="panel-header"><div><h2>Resumen académico</h2><p>Relación entre participación y avance.</p></div></header><strong>{Math.round((attendance+(course?.progress??0))/2)}%</strong><span>Índice integral del curso</span><small>Combina asistencia y progreso LMS.</small></article>
+    </section>
+    <section className="panel table-panel"><div className="table-toolbar"><div><h2>Historial de sesiones</h2><p>{visible.length} sesiones del curso seleccionado</p></div><select aria-label="Filtrar historial por estado" value={status} onChange={(event)=>setStatus(event.target.value)}><option value="TODOS">Todos los estados</option><option value="PRESENTE">Presente</option><option value="TARDANZA">Tardanza</option><option value="FALTA">Falta</option><option value="PENDIENTE">Pendiente</option></select></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Fecha y hora</th><th>Sesión</th><th>Estado</th><th>Registro</th><th>Validación</th></tr></thead><tbody>{visible.map((session)=>{const markStatus=session.mark?.status??(sessionState(session)==="CLOSED"?"FALTA":"PENDIENTE");return <tr key={session.id}><td>{studentAttendanceDate(session.startsAt)}</td><td><strong>{session.title}</strong><small className="table-subline">{session.groupCode}</small></td><td><span className={`status-badge ${markStatus==="PRESENTE"?"success":markStatus==="FALTA"?"danger":markStatus==="PENDIENTE"?"info":"warning"}`}>{markStatus==="PENDIENTE"?"Pendiente":markStatus.toLowerCase()}</span></td><td>{session.mark?.markedAt?studentAttendanceDate(session.mark.markedAt):"—"}</td><td>{session.mark?.validationStatus==="VALIDATED"?<span className="status-badge success">Validada</span>:session.mark?<span className="status-badge warning">Por validar</span>:<span className="status-badge info">{session.window.status==="NOT_OPEN"?"No habilitada":"Sin marca"}</span>}</td></tr>;})}{!loading&&visible.length===0&&<tr><td colSpan={5}><div className="empty-table-state">No hay sesiones para mostrar.</div></td></tr>}</tbody></table></div></section>
   </>;
 }
 

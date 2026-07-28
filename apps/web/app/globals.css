@@ -301,6 +301,27 @@ a { color: inherit; text-decoration: none; }
 .teacher-context { display: grid; grid-template-columns: minmax(190px,1.2fr) 150px minmax(220px,1fr) auto; align-items: flex-end; gap: 12px; margin-bottom: 18px; padding: 16px; }
 .teacher-context .search-control { width: 100%; margin-bottom: 1px; }
 .teacher-context .btn { margin-bottom: 1px; }
+.attendance-context { grid-template-columns: minmax(300px, 1.35fr) minmax(220px, .9fr) minmax(220px, 1fr); }
+.attendance-session-summary { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding-bottom: 3px; }
+.attendance-session-summary > span { color: var(--ink-500); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.attendance-session-summary > strong { overflow: hidden; color: var(--ink-900); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.attendance-session-summary > small { color: var(--ink-400); font-size: 10px; }
+.attendance-window { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; margin-bottom: 18px; padding: 18px; border-color: var(--line); }
+.attendance-window.open { border-color: #a8e3ca; background: linear-gradient(120deg, var(--green-100), #fff 70%); }
+.attendance-window.closed { border-color: #efd8a7; background: linear-gradient(120deg, var(--amber-100), #fff 70%); }
+.attendance-window.validated { border-color: #bce8d2; background: linear-gradient(120deg, #eefaf5, #fff 70%); }
+.attendance-window-icon, .student-checkin-icon { display: grid; width: 48px; height: 48px; place-items: center; color: var(--brand-600); background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-sm); }
+.attendance-window h2, .student-checkin-card h2 { margin: 3px 0 4px; font-size: 17px; }
+.attendance-window p, .student-checkin-card p { margin: 0; color: var(--ink-500); font-size: 11px; line-height: 1.5; }
+.attendance-window-action { display: flex; align-items: center; gap: 12px; }
+.attendance-window-action > strong { min-width: 84px; color: var(--green-700); font-size: 24px; letter-spacing: .04em; text-align: right; }
+.student-checkin-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 17px; margin-bottom: 18px; padding: 20px; }
+.student-checkin-card.is-open { border-color: #a8e3ca; background: linear-gradient(115deg, var(--green-100), #fff 72%); box-shadow: 0 10px 30px rgba(27, 157, 105, .08); }
+.student-checkin-card small { display: block; margin-top: 6px; color: var(--green-700); font-size: 10px; }
+.student-checkin-action { display: flex; align-items: center; gap: 14px; }
+.student-checkin-action > strong { color: var(--green-700); font-size: 24px; letter-spacing: .04em; }
+.table-subline { display: block; margin-top: 3px; color: var(--ink-400); font-size: 9px; }
+.empty-table-state { padding: 18px; color: var(--ink-400); text-align: center; }
 .lms-course-context { grid-template-columns: minmax(240px,1.3fr) 1fr 1fr; align-items: center; }
 .lms-course-context > div { display: grid; gap: 5px; }
 .lms-course-context small { color: var(--ink-500); font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -590,6 +611,10 @@ a { color: inherit; text-decoration: none; }
   .attendance-progress { grid-column: span 2; }
   .attendance-toolbar { grid-template-columns: 1fr; }
   .teacher-context { grid-template-columns: 1fr 1fr; }
+  .attendance-context { grid-template-columns: 1fr 1fr; }
+  .attendance-context .search-control { grid-column: 1 / -1; }
+  .attendance-window, .student-checkin-card { grid-template-columns: auto 1fr; }
+  .attendance-window-action, .student-checkin-action { grid-column: 2; justify-content: flex-start; }
   .assessment-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
@@ -642,6 +667,10 @@ a { color: inherit; text-decoration: none; }
   .session-tabs { overflow-x: auto; padding-bottom: 3px; }
   .attendance-toolbar .search-control { width: 100%; }
   .teacher-context, .lms-course-context, .assessment-grid { grid-template-columns: 1fr; }
+  .attendance-context { grid-template-columns: 1fr; }
+  .attendance-context .search-control { grid-column: auto; }
+  .attendance-window, .student-checkin-card { grid-template-columns: 1fr; }
+  .attendance-window-action, .student-checkin-action { grid-column: auto; flex-wrap: wrap; }
   .module-access { grid-template-columns: 1fr; }
   .dashboard-metrics, .dashboard-grid { grid-template-columns: 1fr; }
   .dashboard-period { width: 100%; }

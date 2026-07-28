@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CheckCircle2,
   ClipboardCheck,
+  Clock3,
   Download,
   ExternalLink,
   FileText,
@@ -24,31 +25,114 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
+  UserCheck,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 
-const estudiantesDocente = [
-  { id: "EST-00124", nombre: "Mariana Torres López", grupo: "GRP-03", curso: "Analítica de datos aplicada", marca: "PRESENTE", acumulado: "94%" },
-  { id: "EST-00156", nombre: "Luis Mendoza Ruiz", grupo: "GRP-03", curso: "Analítica de datos aplicada", marca: "FALTA", acumulado: "72%" },
-  { id: "EST-00179", nombre: "Andrea Salas Vega", grupo: "GRP-03", curso: "Analítica de datos aplicada", marca: "TARDANZA", acumulado: "86%" },
-  { id: "EST-00188", nombre: "Carlos Paredes Núñez", grupo: "GRP-03", curso: "Analítica de datos aplicada", marca: "PENDIENTE", acumulado: "68%" },
-  { id: "EST-00201", nombre: "Rosa Medina Castro", grupo: "GRP-05", curso: "Estrategias de marketing digital", marca: "PRESENTE", acumulado: "97%" },
-];
+type AttendanceWindowState="NOT_OPEN"|"OPEN"|"CLOSED"|"VALIDATED";
+type AttendanceSession={
+  id:string;title:string;startsAt:string|null;endsAt:string|null;classStatus:string;groupId:string;groupCode:string;courseId:string;courseName:string;
+  window:{status:AttendanceWindowState;openedAt:string|null;closesAt:string|null;validatedAt:string|null;durationMinutes:number};
+};
+type AttendanceStudent={
+  id:string;name:string;document:string;status:"PRESENTE"|"TARDANZA"|"FALTA"|"JUSTIFICADA"|"PENDING";
+  source:string|null;markedAt:string|null;validationStatus:string;observation:string;
+};
+type AttendanceDetail={session:AttendanceSession;students:AttendanceStudent[]};
+
+function attendanceDate(value:string|null){
+  return value?new Intl.DateTimeFormat("es-PE",{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)):"Sin fecha";
+}
+
+function attendanceCountdown(closesAt:string|null,now:number){
+  if(!closesAt)return"";
+  const seconds=Math.max(0,Math.ceil((new Date(closesAt).getTime()-now)/1000));
+  return `${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;
+}
 
 export function TeacherAttendance() {
-  const [curso, setCurso] = useState("Analítica de datos aplicada");
-  const [sesion, setSesion] = useState("Sesión 4");
-  const [busqueda, setBusqueda] = useState("");
-  const [estudiantes, setEstudiantes] = useState(estudiantesDocente);
-  const [guardado, setGuardado] = useState(false);
-  const visibles = estudiantes.filter((item) => item.curso === curso && `${item.nombre} ${item.id}`.toLowerCase().includes(busqueda.toLowerCase()));
+  const [sessions,setSessions]=useState<AttendanceSession[]>([]);
+  const [sessionId,setSessionId]=useState("");
+  const [detail,setDetail]=useState<AttendanceDetail|null>(null);
+  const [students,setStudents]=useState<AttendanceStudent[]>([]);
+  const [search,setSearch]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState("");
+  const [error,setError]=useState("");
+  const [now,setNow]=useState(Date.now());
 
-  return <><header className="page-header"><div><span className="page-kicker">Módulo Docente</span><h1>Asistencia</h1><p>Registra la asistencia únicamente de los estudiantes pertenecientes a tus cursos asignados.</p></div></header>
-    {guardado && <div className="feedback feedback-success"><CheckCircle2 size={16}/>Asistencia de {sesion} guardada correctamente.</div>}
-    <section className="teacher-context panel"><label className="form-field"><span>Curso asignado</span><select value={curso} onChange={(event)=>{setCurso(event.target.value);setGuardado(false);}}><option>Analítica de datos aplicada</option><option>Estrategias de marketing digital</option></select></label><label className="form-field"><span>Sesión</span><select value={sesion} onChange={(event)=>{setSesion(event.target.value);setGuardado(false);}}><option>Sesión 4</option><option>Sesión 5</option><option>Sesión 6</option></select></label><label className="search-control"><Search size={17}/><input value={busqueda} onChange={(event)=>setBusqueda(event.target.value)} placeholder="Buscar estudiante asignado"/></label><button className="btn btn-primary" onClick={()=>setGuardado(true)}>Guardar asistencia</button></section>
-    <section className="panel table-panel"><div className="panel-header"><div><h2>Estudiantes asignados</h2><p>{visibles.length} estudiantes visibles · {curso}</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Estudiante</th><th>Documento</th><th>Grupo</th><th>Asistencia acumulada</th><th>Marca de {sesion}</th></tr></thead><tbody>{visibles.map((item)=><tr key={item.id}><td><strong>{item.nombre}</strong></td><td><span className="record-code">{item.id}</span></td><td>{item.grupo}</td><td>{item.acumulado}</td><td><select className={`attendance-select ${item.marca.toLowerCase()}`} value={item.marca} onChange={(event)=>{setGuardado(false);setEstudiantes((actuales)=>actuales.map((student)=>student.id===item.id?{...student,marca:event.target.value}:student));}}><option value="PRESENTE">Presente</option><option value="TARDANZA">Tardanza</option><option value="FALTA">Falta</option><option value="JUSTIFICADA">Falta justificada</option><option value="PENDIENTE">Pendiente</option></select></td></tr>)}</tbody></table></div></section>
+  async function loadSessions(){
+    setLoading(true);setError("");
+    try{
+      const response=await api<AttendanceSession[]>("/academico/attendance/teacher/sessions");
+      setSessions(response);setSessionId((current)=>current||response[0]?.id||"");
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudieron cargar las sesiones");}
+    finally{setLoading(false);}
+  }
+  async function loadDetail(id:string){
+    if(!id){setDetail(null);setStudents([]);return;}
+    try{
+      const response=await api<AttendanceDetail>(`/academico/attendance/teacher/sessions/${id}`);
+      setDetail(response);setStudents(response.students);
+      setSessions((current)=>current.map((item)=>item.id===id?response.session:item));
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo cargar la asistencia");}
+  }
+  useEffect(()=>{void loadSessions();},[]);
+  useEffect(()=>{if(sessionId)void loadDetail(sessionId);},[sessionId]);
+  useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(timer);},[]);
+  const visible=students.filter((student)=>`${student.name} ${student.document}`.toLowerCase().includes(search.toLowerCase()));
+  const marked=students.filter((student)=>student.status!=="PENDING").length;
+  const pending=students.filter((student)=>student.validationStatus!=="VALIDATED").length;
+  const state=detail?.session.window.status??"NOT_OPEN";
+  const windowExpired=state==="OPEN"&&Boolean(detail?.session.window.closesAt)&&new Date(detail!.session.window.closesAt!).getTime()<=now;
+  const effectiveState:AttendanceWindowState=windowExpired?"CLOSED":state;
+
+  async function openWindow(){
+    if(!sessionId)return;
+    setBusy(true);setMessage("");setError("");
+    try{
+      await api(`/academico/attendance/sessions/${sessionId}/open`,{method:"POST"});
+      setMessage("Marcación habilitada. Los estudiantes tienen 30 minutos para registrar su asistencia.");
+      await loadDetail(sessionId);
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo habilitar la marcación");}
+    finally{setBusy(false);}
+  }
+  async function validate(){
+    if(!sessionId)return;
+    setBusy(true);setMessage("");setError("");
+    try{
+      await api(`/academico/attendance/sessions/${sessionId}/validate`,{method:"PUT",body:JSON.stringify({records:students.map((student)=>({
+        studentId:student.id,status:student.status==="PENDING"?"FALTA":student.status,observation:student.observation,
+      }))})});
+      setMessage("Asistencia validada y cerrada correctamente.");
+      await loadDetail(sessionId);
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo validar la asistencia");}
+    finally{setBusy(false);}
+  }
+  function updateStudent(studentId:string,status:AttendanceStudent["status"]){
+    setStudents((current)=>current.map((student)=>student.id===studentId?{...student,status}:student));
+  }
+
+  return <><header className="page-header"><div><span className="page-kicker">Módulo Docente</span><h1>Asistencia</h1><p>Habilita la marcación de cada sesión y valida las asistencias registradas por tus estudiantes.</p></div></header>
+    {message&&<div className="feedback feedback-success"><CheckCircle2 size={16}/>{message}</div>}
+    {error&&<div className="feedback feedback-error">{error}</div>}
+    <section className="teacher-context panel attendance-context">
+      <label className="form-field"><span>Sesión asignada</span><select value={sessionId} disabled={loading} onChange={(event)=>{setSessionId(event.target.value);setMessage("");setError("");}}><option value="">{loading?"Cargando sesiones...":"Selecciona una sesión"}</option>{sessions.map((session)=><option value={session.id} key={session.id}>{session.courseName} · {session.groupCode} · {attendanceDate(session.startsAt)}</option>)}</select></label>
+      <div className="attendance-session-summary"><span>Sesión</span><strong>{detail?.session.title??"Selecciona una sesión"}</strong><small>{detail?`${detail.session.groupCode} · ${attendanceDate(detail.session.startsAt)}`:"Consulta la programación asignada"}</small></div>
+      <label className="search-control"><Search size={17}/><input value={search} onChange={(event)=>setSearch(event.target.value)} placeholder="Buscar estudiante"/></label>
+    </section>
+    {detail&&<section className={`panel attendance-window ${effectiveState.toLowerCase().replace("_","-")}`}>
+      <div className="attendance-window-icon">{effectiveState==="OPEN"?<Clock3 size={25}/>:<UserCheck size={25}/>}</div>
+      <div><span className="page-kicker">Marcación del estudiante</span><h2>{effectiveState==="NOT_OPEN"?"Marcación aún no habilitada":effectiveState==="OPEN"?"Ventana de marcación abierta":effectiveState==="CLOSED"?"Ventana finalizada":"Asistencia validada"}</h2>
+        <p>{effectiveState==="NOT_OPEN"?"Al habilitarla, cada estudiante tendrá 30 minutos para registrar una única marca.":effectiveState==="OPEN"?`Cierra automáticamente en ${attendanceCountdown(detail.session.window.closesAt,now)}. Las marcas quedan pendientes de tu validación.`:effectiveState==="CLOSED"?"Revisa las marcas recibidas. Los estudiantes sin marca se propondrán como falta.":"La sesión está cerrada y sus registros quedaron consolidados."}</p>
+      </div>
+      <div className="attendance-window-action">{effectiveState==="NOT_OPEN"&&<button className="btn btn-primary" disabled={busy} onClick={openWindow}><Clock3 size={16}/>{busy?"Habilitando...":"Habilitar por 30 min"}</button>}{effectiveState==="OPEN"&&<strong>{attendanceCountdown(detail.session.window.closesAt,now)}</strong>}{effectiveState==="CLOSED"&&<button className="btn btn-primary" disabled={busy||students.length===0} onClick={validate}><ClipboardCheck size={16}/>{busy?"Validando...":"Validar y cerrar"}</button>}{effectiveState==="VALIDATED"&&<span className="status-badge success"><CheckCircle2 size={14}/>Validada</span>}</div>
+    </section>}
+    {detail&&<section className="metric-grid compact attendance-metrics"><article className="metric-card"><div className="metric-head"><span>Matriculados</span></div><strong>{students.length}</strong><small>En la sesión seleccionada</small></article><article className="metric-card"><div className="metric-head"><span>Marcaron</span></div><strong>{marked}</strong><small>Registro realizado por estudiantes</small></article><article className="metric-card"><div className="metric-head"><span>Sin marca</span></div><strong>{students.length-marked}</strong><small>Se propondrán como falta</small></article><article className="metric-card"><div className="metric-head"><span>Por validar</span></div><strong>{effectiveState==="VALIDATED"?0:pending}</strong><small>Revisión docente pendiente</small></article></section>}
+    <section className="panel table-panel"><div className="panel-header"><div><h2>Validación docente</h2><p>{detail?`${visible.length} estudiantes · ${detail.session.courseName}`:"Selecciona una sesión para ver a sus estudiantes."}</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Estudiante</th><th>Documento</th><th>Marca del estudiante</th><th>Hora de marca</th><th>Validación final</th></tr></thead><tbody>{visible.map((student)=><tr key={student.id}><td><strong>{student.name}</strong></td><td><span className="record-code">{student.document}</span></td><td>{student.markedAt?<span className="status-badge success">Automarcada</span>:<span className="status-badge warning">Sin marca</span>}</td><td>{student.markedAt?attendanceDate(student.markedAt):"—"}</td><td><select aria-label={`Validar asistencia de ${student.name}`} disabled={effectiveState==="OPEN"||effectiveState==="NOT_OPEN"||effectiveState==="VALIDATED"} className={`attendance-select ${student.status.toLowerCase()}`} value={student.status} onChange={(event)=>updateStudent(student.id,event.target.value as AttendanceStudent["status"])}><option value="PENDING">Pendiente</option><option value="PRESENTE">Presente</option><option value="TARDANZA">Tardanza</option><option value="FALTA">Falta</option><option value="JUSTIFICADA">Falta justificada</option></select></td></tr>)}{!loading&&visible.length===0&&<tr><td colSpan={5}><div className="empty-table-state">No hay estudiantes para mostrar en esta sesión.</div></td></tr>}</tbody></table></div></section>
   </>;
 }
 

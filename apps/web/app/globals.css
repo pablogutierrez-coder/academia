@@ -301,7 +301,9 @@ a { color: inherit; text-decoration: none; }
 .teacher-context { display: grid; grid-template-columns: minmax(190px,1.2fr) 150px minmax(220px,1fr) auto; align-items: flex-end; gap: 12px; margin-bottom: 18px; padding: 16px; }
 .teacher-context .search-control { width: 100%; margin-bottom: 1px; }
 .teacher-context .btn { margin-bottom: 1px; }
-.attendance-context { grid-template-columns: minmax(300px, 1.35fr) minmax(220px, .9fr) minmax(220px, 1fr); }
+.attendance-context { grid-template-columns: minmax(0, 1.35fr) minmax(0, .9fr) minmax(0, 1fr); }
+.attendance-context > * { min-width: 0; }
+.attendance-context .form-field select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 .attendance-session-summary { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding-bottom: 3px; }
 .attendance-session-summary > span { color: var(--ink-500); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .attendance-session-summary > strong { overflow: hidden; color: var(--ink-900); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

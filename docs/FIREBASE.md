@@ -115,6 +115,8 @@ organizations/{organizationId}
   enrollments/{groupId_studentId}
   classes/{classId}
     history/{historyId}
+  attendanceWindows/{classId}
+  attendanceMarks/{classId_studentId}
   audit/{auditId}
 
 authorization/catalog
@@ -123,6 +125,12 @@ authorization/catalog
 ```
 
 Esta separación mantiene los datos académicos aislados por organización y evita consultas globales accidentales.
+
+La asistencia usa dos colecciones operativas. `attendanceWindows` conserva la
+habilitación del docente, su vencimiento automático a los 30 minutos y la
+validación final. `attendanceMarks` conserva la marca única del estudiante, su
+hora, origen, estado y revisión docente. La API verifica matrícula, grupo,
+ventana vigente y permisos antes de cada escritura.
 
 ## 7. Reglas e índices
 

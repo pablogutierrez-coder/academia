@@ -31,6 +31,8 @@ const schema={
   enrollments:["estudianteId","grupoId","cursoId","estado","fechaIngreso"],
   classes:["grupoId","docenteId","titulo","inicio","fin","estado"],
   attendanceSessions:["cursoId","grupoId","claseId","fecha","programados","presentes","tardanzas","faltas","estado"],
+  attendanceWindows:["classId","courseId","groupId","teacherId","openedAt","closesAt","durationMinutes","status","openedBy"],
+  attendanceMarks:["classId","courseId","groupId","studentId","status","source","validationStatus"],
   learningPaths:["cursoId","titulo","descripcion","estado","version","updatedAt"],
   grades:["estudianteId","cursoId","evaluacionId","nota","estado","publicada"],
   surveys:["nombre","tipo","cursoId","grupoId","docenteId","destinatarios","respuestas","nps","estado"],
@@ -83,6 +85,20 @@ for(const document of documents.attendanceSessions??[]){
   if(!classes.has(data.claseId)) result.errors.push(`attendanceSessions/${document.id}: claseId sin referencia`);
   const marks=await document.ref.collection("marks").get();
   if(marks.empty) result.warnings.push(`attendanceSessions/${document.id}: sin marcas individuales`);
+}
+for(const document of documents.attendanceWindows??[]){
+  const data=document.data();
+  if(!classes.has(data.classId)) result.errors.push(`attendanceWindows/${document.id}: classId sin referencia`);
+  if(!groups.has(data.groupId)) result.errors.push(`attendanceWindows/${document.id}: groupId sin referencia`);
+  if(!courses.has(data.courseId)) result.errors.push(`attendanceWindows/${document.id}: courseId sin referencia`);
+  if(!teachers.has(data.teacherId)) result.errors.push(`attendanceWindows/${document.id}: teacherId sin referencia`);
+}
+for(const document of documents.attendanceMarks??[]){
+  const data=document.data();
+  if(!classes.has(data.classId)) result.errors.push(`attendanceMarks/${document.id}: classId sin referencia`);
+  if(!groups.has(data.groupId)) result.errors.push(`attendanceMarks/${document.id}: groupId sin referencia`);
+  if(!courses.has(data.courseId)) result.errors.push(`attendanceMarks/${document.id}: courseId sin referencia`);
+  if(!students.has(data.studentId)) result.errors.push(`attendanceMarks/${document.id}: studentId sin referencia`);
 }
 for(const route of documents.learningPaths??[]){
   if(!courses.has(route.id)) result.errors.push(`learningPaths/${route.id}: curso inexistente`);

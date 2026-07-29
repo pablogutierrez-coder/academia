@@ -48,6 +48,14 @@ class LearningPathDto {
   @IsString() estado!:string;
   @IsArray() @ValidateNested({each:true}) @Type(()=>LearningModuleDto) modulos!:LearningModuleDto[];
 }
+class AttendanceValidationItemDto {
+  @IsString() @IsNotEmpty() studentId!:string;
+  @IsIn(["PRESENTE","TARDANZA","FALTA","JUSTIFICADA"]) status!:"PRESENTE"|"TARDANZA"|"FALTA"|"JUSTIFICADA";
+  @IsOptional() @IsString() observation?:string;
+}
+class AttendanceValidationDto {
+  @IsArray() @ValidateNested({each:true}) @Type(()=>AttendanceValidationItemDto) records!:AttendanceValidationItemDto[];
+}
 
 @Injectable()
 export class AcademicoService {
@@ -159,6 +167,48 @@ export class AcademicoController {
     if(getDataProvider()!=="firebase") throw new BadRequestException("La persistencia LMS requiere DATA_PROVIDER=firebase");
     if(!file) throw new BadRequestException("Selecciona un archivo válido");
     return this.firebase.uploadCourseResource(req.user.organizacionId,req.user.sub,req.user.perfil,courseId,file);
+  }
+
+  @Get("attendance/teacher/sessions")
+  @Permisos("asistencia.registrar")
+  teacherAttendanceSessions(@Req() req:RequestUser){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La asistencia requiere DATA_PROVIDER=firebase");
+    return this.firebase.teacherAttendanceSessions(req.user.organizacionId,req.user.sub,req.user.perfil);
+  }
+
+  @Get("attendance/teacher/sessions/:classId")
+  @Permisos("asistencia.registrar")
+  teacherAttendanceDetail(@Req() req:RequestUser,@Param("classId") classId:string){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La asistencia requiere DATA_PROVIDER=firebase");
+    return this.firebase.teacherAttendanceDetail(req.user.organizacionId,req.user.sub,req.user.perfil,classId);
+  }
+
+  @Post("attendance/sessions/:classId/open")
+  @Permisos("asistencia.registrar")
+  openAttendance(@Req() req:RequestUser,@Param("classId") classId:string){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La asistencia requiere DATA_PROVIDER=firebase");
+    return this.firebase.openAttendanceWindow(req.user.organizacionId,req.user.sub,req.user.perfil,classId);
+  }
+
+  @Put("attendance/sessions/:classId/validate")
+  @Permisos("asistencia.registrar")
+  validateAttendance(@Req() req:RequestUser,@Param("classId") classId:string,@Body() dto:AttendanceValidationDto){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La asistencia requiere DATA_PROVIDER=firebase");
+    return this.firebase.validateAttendance(req.user.organizacionId,req.user.sub,req.user.perfil,classId,dto.records);
+  }
+
+  @Get("attendance/student")
+  @Permisos("asistencia.propia")
+  studentAttendance(@Req() req:RequestUser){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La asistencia requiere DATA_PROVIDER=firebase");
+    return this.firebase.studentAttendance(req.user.organizacionId,req.user.sub,req.user.perfil);
+  }
+
+  @Post("attendance/sessions/:classId/check-in")
+  @Permisos("asistencia.propia")
+  studentCheckIn(@Req() req:RequestUser,@Param("classId") classId:string){
+    if(getDataProvider()!=="firebase") throw new BadRequestException("La asistencia requiere DATA_PROVIDER=firebase");
+    return this.firebase.studentCheckIn(req.user.organizacionId,req.user.sub,req.user.perfil,classId);
   }
 
   @Post("clases")

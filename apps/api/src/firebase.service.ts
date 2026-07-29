@@ -451,8 +451,13 @@ export class FirebaseService {
     const context = await this.attendanceContext(orgId);
     const enrollmentsSnapshot = await context.org.collection("enrollments").where("estudianteId", "==", userId).get();
     const enrollments = enrollmentsSnapshot.docs.filter((document) => document.data().estado !== "INACTIVO").map((document) => document.data());
-    const courseIds = new Set(enrollments.map((item) => String(item.cursoId ?? "")).filter(Boolean));
-    const groupIds = new Set(enrollments.map((item) => String(item.grupoId ?? "")).filter(Boolean));
+    const isAdministrator = profile === "Administrador";
+    const courseIds = isAdministrator
+      ? new Set([...context.courses.values()].filter((course) => course.deletedAt == null).map((course) => course.id))
+      : new Set(enrollments.map((item) => String(item.cursoId ?? "")).filter(Boolean));
+    const groupIds = isAdministrator
+      ? new Set(context.groups.keys())
+      : new Set(enrollments.map((item) => String(item.grupoId ?? "")).filter(Boolean));
     const marksSnapshot = await context.org.collection("attendanceMarks").where("studentId", "==", userId).get();
     const marks = new Map(marksSnapshot.docs.map((document) => [String(document.data().classId), normalizeSnapshot(document)]));
     const sessions = context.classes
@@ -480,7 +485,7 @@ export class FirebaseService {
       courses: [...courseIds].map((courseId) => {
         const course = context.courses.get(courseId);
         return { id: courseId, name: String(course?.nombre ?? courseId), progress: Number(course?.progreso ?? 0) };
-      }),
+      }).sort((a, b) => a.name.localeCompare(b.name, "es")),
       sessions,
     };
   }
